@@ -82,6 +82,41 @@ def get_demos_for_filter_key(hdf5_path, filter_key):
     return demo_keys
 
 
+def preprocess_omnigibson_dataset(dataset_path):
+    """
+    Preprocesses an Omnigibson dataset to satisfy the requirements of mimicgen
+    :param dataset_path:
+    :return:
+    """
+    dataset_path = os.path.expanduser(dataset_path)
+    f = h5py.File(dataset_path, "r+")
+    env_kwargs = json.loads(f["data"].attrs["config"])
+
+    # env_name is the same as the BDDL activity name + "_D0" (the original distribution)
+    env_meta = {
+        "env_name": env_kwargs["task"]["activity_name"] + "_D0",
+        "type": EnvUtils.EB.EnvType.OG_TYPE,
+        "env_kwargs": env_kwargs,
+    }
+    f["data"].attrs["env_args"] = json.dumps(env_meta)
+
+    # Remove the last state from each demo, as mimicgen expects the state and the action have the same length.
+    # Currently OG save s_0 to s_t, and a_0 to a_{t-1}. We need to remove the last state to make it consistent.
+    for demo_key in f["data"]:
+        demo = f["data"][demo_key]
+        action = demo["action"]
+        if len(action) != len(demo["state"]):
+            assert len(action) == len(demo["state"]) - 1
+            truncated_state = demo["state"][:-1]
+            del demo["state"]
+            demo["state"] = truncated_state
+            truncated_state_size = demo["state_size"][:-1]
+            del demo["state_size"]
+            demo["state_size"] = truncated_state_size
+
+    f.close()
+
+
 def get_env_metadata_from_dataset(dataset_path, set_env_specific_obs_processors=True):
     """
     Retrieves env metadata from dataset.

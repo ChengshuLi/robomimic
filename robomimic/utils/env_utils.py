@@ -41,6 +41,9 @@ def get_env_class(env_meta=None, env_type=None, env=None):
     elif env_type == EB.EnvType.IG_MOMART_TYPE:
         from robomimic.envs.env_ig_momart import EnvGibsonMOMART
         return EnvGibsonMOMART
+    elif env_type == EB.EnvType.OG_TYPE:
+        from robomimic.envs.env_omnigibson import EnvOmniGibson
+        return EnvOmniGibson
     raise Exception("code should never reach this point")
 
 
@@ -226,6 +229,10 @@ def create_env_from_metadata(
     env_type = get_env_type(env_meta=env_meta)
     env_kwargs = env_meta["env_kwargs"]
 
+    if env_type == EB.EnvType.OG_TYPE:
+        env_class = get_env_class(env_type=env_type)
+        return env_class.create_for_data_processing(env_name=env_name, **env_kwargs)
+
     env = create_env(
         env_type=env_type,
         env_name=env_name,  
@@ -284,6 +291,9 @@ def create_env_for_data_processing(
     env_kwargs = env_meta["env_kwargs"]
     if env_class is None:
         env_class = get_env_class(env_type=env_type)
+
+    if env_type == EB.EnvType.OG_TYPE:
+        return env_class.create_for_data_processing(env_name=env_name, **env_kwargs)
 
     # remove possibly redundant values in kwargs
     env_kwargs = deepcopy(env_kwargs)
