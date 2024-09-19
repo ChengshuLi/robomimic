@@ -175,6 +175,7 @@ class EnvOmniGibson(EB.EnvBase):
             return di
 
         obs, info = self.env.get_obs()
+        obs = obs.numpy()
         return obs
 
     def get_state(self):
