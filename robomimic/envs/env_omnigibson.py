@@ -85,6 +85,8 @@ class EnvOmniGibson(EB.EnvBase):
     def _get_task_relevant_objs(self):
         if self.name.startswith("test_pen_book"):
             obj_names = ["rubber_eraser.n.01_1", "hardback.n.01_1"]
+        elif self.name.startswith("test_cabinet"):
+            obj_names = ["cabinet.n.01_1"]
         else:
             raise ValueError(f"Unknown environment name: {self.name}")
 
