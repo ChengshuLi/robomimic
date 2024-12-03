@@ -60,8 +60,44 @@ class EnvOmniGibson(EB.EnvBase):
             rgba=th.tensor([0, 1, 0, 1]),
         ) if DEBUG else None
 
+        # Debug visualization for bimanual setup
+        self.eef_current_marker_left = PrimitiveObject(
+            relative_prim_path="/eef_current_marker_left",
+            primitive_type="Sphere",
+            name="eef_current_left",
+            radius=0.03,
+            visual_only=True,
+            rgba=th.tensor([1, 0, 0, 1]),
+        ) if DEBUG else None
+        self.eef_goal_marker_left = PrimitiveObject(
+            relative_prim_path="/eef_goal_marker_left",
+            primitive_type="Sphere",
+            name="eef_goal_marker_left",
+            radius=0.03,
+            visual_only=True,
+            rgba=th.tensor([0, 1, 0, 1]),
+        ) if DEBUG else None
+        self.eef_current_marker_right = PrimitiveObject(
+            relative_prim_path="/eef_current_marker_right",
+            primitive_type="Sphere",
+            name="eef_current_right",
+            radius=0.03,
+            visual_only=True,
+            rgba=th.tensor([1, 0, 0, 1]),
+        ) if DEBUG else None
+        self.eef_goal_marker_right = PrimitiveObject(
+            relative_prim_path="/eef_goal_marker_right",
+            primitive_type="Sphere",
+            name="eef_goal_marker_right",
+            radius=0.03,
+            visual_only=True,
+            rgba=th.tensor([0, 0, 1, 1]),
+        ) if DEBUG else None
+
         if DEBUG:
-            og.sim.batch_add_objects([self.eef_current_marker, self.eef_goal_marker], [self.env.scene] * 2)
+            # og.sim.batch_add_objects([self.eef_current_marker, self.eef_goal_marker], [self.env.scene] * 2)
+            og.sim.batch_add_objects([self.eef_current_marker_left, self.eef_goal_marker_left, 
+                                      self.eef_current_marker_right, self.eef_goal_marker_right], [self.env.scene] * 4)
             og.sim.step()
 
     def step(self, action):
@@ -87,6 +123,12 @@ class EnvOmniGibson(EB.EnvBase):
             obj_names = ["rubber_eraser.n.01_1", "hardback.n.01_1"]
         elif self.name.startswith("test_cabinet"):
             obj_names = ["cabinet.n.01_1"]
+        elif self.name.startswith("test_tiago_giftbox"):
+            obj_names = ["gift_box.n.01_1"]
+        elif self.name.startswith("test_tiago_notebook"):
+            obj_names = ["notebook.n.01_1", "breakfast_table.n.01_1"]
+        elif self.name.startswith("test_tiago_cup"):
+            obj_names = ["coffee_cup.n.01_1", "dixie_cup.n.01_1", "breakfast_table.n.01_1"]
         else:
             raise ValueError(f"Unknown environment name: {self.name}")
 
@@ -99,13 +141,14 @@ class EnvOmniGibson(EB.EnvBase):
         rot_magnitude = np.pi / 12  # 15 degrees
 
         for obj in objs:
-            pos, orn = obj.get_position_orientation()
-            pos_diff_xy = np.random.uniform(-pos_magnitude, pos_magnitude, size=2)
-            pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
-            pos += pos_diff
-            orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
-            orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
-            obj.set_position_orientation(pos, orn)
+            if 'table' not in obj.name:
+                pos, orn = obj.get_position_orientation()
+                pos_diff_xy = np.random.uniform(-pos_magnitude, pos_magnitude, size=2)
+                pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
+                pos += pos_diff
+                orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
+                orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
+                obj.set_position_orientation(pos, orn)
 
     # TODO: make it more generalizable
     def reset(self):
