@@ -20,7 +20,7 @@ import numpy as np
 
 from omnigibson.macros import gm
 
-gm.USE_GPU_DYNAMICS = True
+gm.USE_GPU_DYNAMICS = False
 gm.ENABLE_FLATCACHE = False
 
 DEBUG = True
@@ -140,14 +140,43 @@ class EnvOmniGibson(EB.EnvBase):
         pos_magnitude = 0.10  # 5cm
         rot_magnitude = np.pi / 12  # 15 degrees
 
+        # for debugging
+        # pos_magnitude = 0.001
+        # rot_magnitude = np.pi / 10000  # 15 degrees
+
         for obj in objs:
             if 'table' not in obj.name:
                 pos, orn = obj.get_position_orientation()
                 pos_diff_xy = np.random.uniform(-pos_magnitude, pos_magnitude, size=2)
                 pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
                 pos += pos_diff
+                # TODO： without mobile motion， the target pose need to be very carefully selected
+                pos += th.from_numpy(np.array([-.15, 0.0, 0]))
                 orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
                 orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
+                obj.set_position_orientation(pos, orn)
+
+    def _randomize_object_pose_D2(self, objs):
+        pos_magnitude = 0.10  # 5cm
+        rot_magnitude = np.pi / 12  # 15 degrees
+
+        # for debugging
+        # pos_magnitude = 0.001
+        # rot_magnitude = np.pi / 10000  # 15 degrees
+
+        for obj in objs:
+            if 'table' not in obj.name:
+                pos, orn = obj.get_position_orientation()
+                pos_diff_xy = np.random.uniform(-pos_magnitude, pos_magnitude, size=2)
+                pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
+                pos += pos_diff
+                # TODO： without mobile motion， the target pose need to be very carefully selected
+                pos += th.from_numpy(np.array([-.15, 0.0, 0]))
+                orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
+                orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
+
+                pos[1] = -pos[1] # mirror the position along the y-axis
+                orn = T.mat2quat(T.euler2mat(th.tensor([0.0, 0.0, np.pi])) @ T.quat2mat(orn)) # add pi orientation along the y-axis
                 obj.set_position_orientation(pos, orn)
 
     # TODO: make it more generalizable
@@ -168,6 +197,19 @@ class EnvOmniGibson(EB.EnvBase):
         elif self.name.endswith("D1"):
             task_relevant_objs = self._get_task_relevant_objs()
             self._randomize_object_pose(task_relevant_objs)
+
+            # Step one time to update the scene and render a few times as well
+            og.sim.step()
+            for _ in range(5):
+                og.sim.render()
+
+            # Update the observation
+            obs, info = self.env.get_obs()
+        
+        elif self.name.endswith("D2"):
+            # for arm role change
+            task_relevant_objs = self._get_task_relevant_objs()
+            self._randomize_object_pose_D2(task_relevant_objs)
 
             # Step one time to update the scene and render a few times as well
             og.sim.step()
