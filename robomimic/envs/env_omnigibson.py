@@ -13,6 +13,8 @@ import robomimic.envs.env_base as EB
 
 import omnigibson.utils.transform_utils as T
 from omnigibson.objects.primitive_object import PrimitiveObject
+from omnigibson.action_primitives.curobo import CuroboEmbodimentSelection, CuRoboMotionGenerator
+
 
 import torch as th
 import numpy as np
@@ -41,21 +43,33 @@ class EnvOmniGibson(EB.EnvBase):
             og.clear()
 
         self.env = og.Environment(configs=kwargs)
+        # TODO: uncomment the following lines for data generation.
+        controller_config = {
+            'base': {'name': 'JointController', 'use_delta_commands': False, "command_output_limits": "default"},
+            'trunk': {'name': 'JointController', 'use_delta_commands': False, "command_output_limits": "default"},
+            'arm_left': {'name': 'JointController', 'use_delta_commands': False, "command_output_limits": "default"},
+            'arm_right': {'name': 'JointController', 'use_delta_commands': False, "command_output_limits": "default"},
+            'gripper_left': {'name': 'MultiFingerGripperController', 'mode': 'binary'},
+            'gripper_right': {'name': 'MultiFingerGripperController', 'mode': 'binary'},
+            'camera': {'name': 'JointController', 'use_delta_commands': False, "command_output_limits": "default"},
+        }
+        self.env.robots[0].reload_controllers(controller_config=controller_config)
+        self.env.scene.update_initial_state()
 
         # Debug visualization
         self.eef_current_marker = PrimitiveObject(
             relative_prim_path="/eef_current_marker",
-            primitive_type="Sphere",
+            primitive_type="Cube",
             name="eef_current",
-            radius=0.03,
+            size=th.tensor([0.03, 0.03, 0.1]),
             visual_only=True,
             rgba=th.tensor([1, 0, 0, 1]),
         ) if DEBUG else None
         self.eef_goal_marker = PrimitiveObject(
             relative_prim_path="/eef_goal_marker",
-            primitive_type="Sphere",
+            primitive_type="Cube",
             name="eef_goal_marker",
-            radius=0.03,
+            size=th.tensor([0.03, 0.03, 0.1]),
             visual_only=True,
             rgba=th.tensor([0, 1, 0, 1]),
         ) if DEBUG else None
@@ -63,33 +77,33 @@ class EnvOmniGibson(EB.EnvBase):
         # Debug visualization for bimanual setup
         self.eef_current_marker_left = PrimitiveObject(
             relative_prim_path="/eef_current_marker_left",
-            primitive_type="Sphere",
+            primitive_type="Cube",
             name="eef_current_left",
-            radius=0.03,
+            size=th.tensor([0.03, 0.03, 0.1]),
             visual_only=True,
             rgba=th.tensor([1, 0, 0, 1]),
         ) if DEBUG else None
         self.eef_goal_marker_left = PrimitiveObject(
             relative_prim_path="/eef_goal_marker_left",
-            primitive_type="Sphere",
+            primitive_type="Cube",
             name="eef_goal_marker_left",
-            radius=0.03,
+            size=th.tensor([0.03, 0.03, 0.1]),
             visual_only=True,
             rgba=th.tensor([0, 1, 0, 1]),
         ) if DEBUG else None
         self.eef_current_marker_right = PrimitiveObject(
             relative_prim_path="/eef_current_marker_right",
-            primitive_type="Sphere",
+            primitive_type="Cube",
             name="eef_current_right",
-            radius=0.03,
+            size=th.tensor([0.03, 0.03, 0.1]),
             visual_only=True,
             rgba=th.tensor([1, 0, 0, 1]),
         ) if DEBUG else None
         self.eef_goal_marker_right = PrimitiveObject(
             relative_prim_path="/eef_goal_marker_right",
-            primitive_type="Sphere",
+            primitive_type="Cube",
             name="eef_goal_marker_right",
-            radius=0.03,
+            size=th.tensor([0.03, 0.03, 0.1]),
             visual_only=True,
             rgba=th.tensor([0, 0, 1, 1]),
         ) if DEBUG else None
@@ -99,6 +113,13 @@ class EnvOmniGibson(EB.EnvBase):
             og.sim.batch_add_objects([self.eef_current_marker_left, self.eef_goal_marker_left, 
                                       self.eef_current_marker_right, self.eef_goal_marker_right], [self.env.scene] * 4)
             og.sim.step()
+
+        # Create CuRobo instance
+        self.cmg = CuRoboMotionGenerator(
+            robot=self.env.robots[0],
+            batch_size=1,
+            use_cuda_graph=True,
+        )
 
     def step(self, action):
         """
