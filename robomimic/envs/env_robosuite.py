@@ -3,6 +3,7 @@ This file contains the robosuite environment wrapper that is used
 to provide a standardized environment API for training policies and interacting
 with metadata present in datasets.
 """
+import os
 import json
 import numpy as np
 from copy import deepcopy
@@ -38,8 +39,8 @@ class EnvRobosuite(EB.EnvBase):
         render=False, 
         render_offscreen=False, 
         use_image_obs=False, 
-        use_depth_obs=False, 
-        postprocess_visual_obs=True, 
+        use_depth_obs=False,
+        postprocess_visual_obs=True,
         **kwargs,
     ):
         """
@@ -87,12 +88,17 @@ class EnvRobosuite(EB.EnvBase):
 
         if self._is_v1:
             if kwargs["has_offscreen_renderer"]:
-                # ensure that we select the correct GPU device for rendering by testing for EGL rendering
-                # NOTE: this package should be installed from this link (https://github.com/StanfordVL/egl_probe)
-                import egl_probe
-                valid_gpu_devices = egl_probe.get_available_devices()
-                if len(valid_gpu_devices) > 0:
-                    kwargs["render_gpu_device_id"] = valid_gpu_devices[0]
+                cuda_visible_device = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+                if cuda_visible_device.isnumeric():
+                    # assume that user specified a specific GPU ID
+                    kwargs["render_gpu_device_id"] = int(cuda_visible_device)
+                else:
+                    # ensure that we select the correct GPU device for rendering by testing for EGL rendering
+                    # NOTE: this package should be installed from this link (https://github.com/StanfordVL/egl_probe)
+                    import egl_probe
+                    valid_gpu_devices = egl_probe.get_available_devices()
+                    if len(valid_gpu_devices) > 0:
+                        kwargs["render_gpu_device_id"] = valid_gpu_devices[0]
         else:
             # make sure gripper visualization is turned off (we almost always want this for learning)
             kwargs["gripper_visualization"] = False
@@ -222,7 +228,16 @@ class EnvRobosuite(EB.EnvBase):
                 ret[k] = di[k][::-1]
                 if len(ret[k].shape) == 2:
                     ret[k] = ret[k][..., None] # (H, W, 1)
-                assert len(ret[k].shape) == 3 
+                assert len(ret[k].shape) == 3
+                # scale entries in depth map to correspond to real distance.
+                ret[k] = self.get_real_depth_map(ret[k])
+                if self.postprocess_visual_obs:
+                    ret[k] = ObsUtils.process_obs(obs=ret[k], obs_key=k)
+            elif (k in ObsUtils.OBS_KEYS_TO_MODALITIES) and ObsUtils.key_is_obs_modality(key=k, obs_modality="depth"):
+                ret[k] = di[k][::-1]
+                if len(ret[k].shape) == 2:
+                    ret[k] = ret[k][..., None] # (H, W, 1)
+                assert len(ret[k].shape) == 3
                 # scale entries in depth map to correspond to real distance.
                 ret[k] = self.get_real_depth_map(ret[k])
                 if self.postprocess_visual_obs:
@@ -418,10 +433,10 @@ class EnvRobosuite(EB.EnvBase):
         camera_height, 
         camera_width, 
         reward_shaping, 
-        render=None, 
-        render_offscreen=None, 
-        use_image_obs=None, 
-        use_depth_obs=None, 
+        render=None,
+        render_offscreen=None,
+        use_image_obs=None,
+        use_depth_obs=None,
         **kwargs,
     ):
         """
@@ -487,9 +502,9 @@ class EnvRobosuite(EB.EnvBase):
         # note that @postprocess_visual_obs is False since this env's images will be written to a dataset
         return cls(
             env_name=env_name,
-            render=(False if render is None else render), 
-            render_offscreen=(has_camera if render_offscreen is None else render_offscreen), 
-            use_image_obs=(has_camera if use_image_obs is None else use_image_obs), 
+            render=(False if render is None else render),
+            render_offscreen=(has_camera if render_offscreen is None else render_offscreen),
+            use_image_obs=(has_camera if use_image_obs is None else use_image_obs),
             use_depth_obs=use_depth_obs,
             postprocess_visual_obs=False,
             **kwargs,

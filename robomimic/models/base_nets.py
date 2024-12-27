@@ -14,6 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import transforms
 from torchvision import models as vision_models
+from torchvision import transforms
 
 import robomimic.utils.tensor_utils as TensorUtils
 
@@ -56,7 +57,7 @@ def transformer_args_from_config(transformer_config):
         transformer_activation=transformer_config.activation,
         transformer_nn_parameter_for_timesteps=transformer_config.nn_parameter_for_timesteps,
     )
-    
+
     if "num_layers" in transformer_config:
         transformer_args["transformer_num_layers"] = transformer_config.num_layers
 
@@ -851,7 +852,7 @@ class Conv1dBase(Module):
 
         # Get activation requested
         activation = CONV_ACTIVATIONS[activation]
-        
+
         # Add layer kwargs
         conv_kwargs["out_channels"] = out_channels
         conv_kwargs["kernel_size"] = kernel_size

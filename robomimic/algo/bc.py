@@ -667,7 +667,7 @@ class BC_RNN_GMM(BC_RNN):
         """
         log = PolicyAlgo.log_info(self, info)
         log["Loss"] = info["losses"]["action_loss"].item()
-        log["Log_Likelihood"] = info["losses"]["log_probs"].item() 
+        log["Log_Likelihood"] = info["losses"]["log_probs"].item()
         if "policy_grad_norms" in info:
             log["Policy_Grad_Norms"] = info["policy_grad_norms"]
         return log
@@ -693,7 +693,7 @@ class BC_Transformer(BC):
         )
         self._set_params_from_config()
         self.nets = self.nets.float().to(self.device)
-        
+
     def _set_params_from_config(self):
         """
         Read specific config variables we need for training / eval.
@@ -742,9 +742,9 @@ class BC_Transformer(BC):
         """
         # ensure that transformer context length is consistent with temporal dimension of observations
         TensorUtils.assert_size_at_dim(
-            batch["obs"], 
-            size=(self.context_length), 
-            dim=1, 
+            batch["obs"],
+            size=(self.context_length),
+            dim=1,
             msg="Error: expect temporal dimension of obs batch to match transformer context length {}".format(self.context_length),
         )
 
@@ -801,14 +801,14 @@ class BC_Transformer_GMM(BC_Transformer):
         """
         # ensure that transformer context length is consistent with temporal dimension of observations
         TensorUtils.assert_size_at_dim(
-            batch["obs"], 
-            size=(self.context_length), 
-            dim=1, 
+            batch["obs"],
+            size=(self.context_length),
+            dim=1,
             msg="Error: expect temporal dimension of obs batch to match transformer context length {}".format(self.context_length),
         )
 
         dists = self.nets["policy"].forward_train(
-            obs_dict=batch["obs"], 
+            obs_dict=batch["obs"],
             actions=None,
             goal_dict=batch["goal_obs"],
             low_noise_eval=False,
