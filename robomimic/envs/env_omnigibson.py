@@ -10,6 +10,7 @@ from copy import deepcopy
 import omnigibson as og
 import robomimic.utils.obs_utils as ObsUtils
 import robomimic.envs.env_base as EB
+from omnigibson.envs import create_wrapper
 
 import omnigibson.utils.transform_utils as T
 from omnigibson.objects.primitive_object import PrimitiveObject
@@ -243,6 +244,9 @@ class EnvOmniGibson(EB.EnvBase):
             raise ValueError(f"Unknown environment name: {self.name}")
 
         return obs
+    
+    def wrap_env(self):
+        self.env = create_wrapper(env=self.env)
 
     def reset_to(self, state):
         """
