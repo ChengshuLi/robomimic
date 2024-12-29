@@ -136,7 +136,9 @@ class EnvOmniGibson(EB.EnvBase):
             info (dict): extra information
         """
         obs, r, done, truncated, info = self.env.step(action)
-        return obs, r, done, info
+        # return obs, r, done, info
+        # changed to output with truncated
+        return obs, r, done, truncated, info
 
     # TODO: make it more generalizable
     # Get task relevant objects based on the env name (BDDL activity name)
