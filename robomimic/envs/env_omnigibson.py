@@ -18,6 +18,7 @@ from omnigibson.action_primitives.curobo import CuroboEmbodimentSelection, CuRob
 
 import torch as th
 import numpy as np
+import gym
 
 
 from omnigibson.macros import gm
@@ -158,8 +159,8 @@ class EnvOmniGibson(EB.EnvBase):
     # TODO: make it more generalizable
     # randomize the pose of all the task relevant objects in xy-pos and z-rot
     def _randomize_object_pose(self, objs):
-        pos_magnitude = 0.10  # 5cm
-        rot_magnitude = np.pi / 12  # 15 degrees
+        pos_magnitude = 0.0  # 5cm
+        rot_magnitude = np.pi / 20  # 15 degrees
 
         # for debugging
         # pos_magnitude = 0.001
@@ -172,7 +173,7 @@ class EnvOmniGibson(EB.EnvBase):
                 pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
                 pos += pos_diff
                 # TODO： without mobile motion， the target pose need to be very carefully selected
-                pos += th.from_numpy(np.array([-.15, 0.0, 0]))
+                # pos += th.from_numpy(np.array([-.15, 0.0, 0]))
                 orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
                 orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
                 obj.set_position_orientation(pos, orn)
@@ -277,7 +278,44 @@ class EnvOmniGibson(EB.EnvBase):
             og.sim.render()
         else:
             return np.zeros((height if height else 128, width if width else 128, 3), dtype=np.uint8)
+    
+    def get_obs_IL(self, di=None):
+        """
+        Get observation for IL baselines
+         - robot proprioceptive state
+         - objects in the scene and their states
+         - default observations
+        """
 
+        # customize observation for IL baselines
+        robot_prop_states = self.env.robots[0]._get_proprioception_dict()
+
+        # get object states
+        obj_states = {}
+        obj_bddl_names = [obj.bddl_inst for obj in self.env._task.object_scope.values()] # get object names
+        for obj_name in obj_bddl_names:
+            if 'agent' not in obj_name and 'robot' not in obj_name and 'table' not in obj_name and 'floor' not in obj_name:
+                # TODO: here not checking whether the object exist in the scene, may need to handle this silimar to omnigibson/tasks/behavior_task.py
+                pos, ori = self.env.task.object_scope[obj_name].get_position_orientation()
+                obj_states[obj_name] = np.concatenate([pos, ori])
+
+        # get default observations
+        other_obs = self.get_observation(di)
+
+        # combine all observations
+        obs_IL = {}
+        # merge with other observation types
+        obs_IL.update(robot_prop_states)
+        obs_IL.update(obj_states)       
+        obs_IL.update(other_obs)
+        return obs_IL
+    
+    def get_observation_list_IL(self):
+        # return the list of observation keys for IL baselines
+        obs = self.get_obs_IL()
+        obs_list = list(obs.keys())
+        return obs_list
+    
     def get_observation(self, di=None):
         if di:
             return di
