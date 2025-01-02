@@ -290,6 +290,43 @@ class EnvOmniGibson(EB.EnvBase):
 
         obs, info = self.env.get_obs()
         return obs
+    
+    def get_obs_IL(self, di=None):
+        """
+        Get observation for IL baselines
+         - robot proprioceptive state
+         - objects in the scene and their states
+         - default observations
+        """
+
+        # customize observation for IL baselines
+        robot_prop_states = self.env.robots[0]._get_proprioception_dict()
+
+        # get object states
+        obj_states = {}
+        obj_bddl_names = [obj.bddl_inst for obj in self.env._task.object_scope.values()] # get object names
+        for obj_name in obj_bddl_names:
+            if 'agent' not in obj_name and 'robot' not in obj_name and 'table' not in obj_name and 'floor' not in obj_name:
+                # TODO: here not checking whether the object exist in the scene, may need to handle this silimar to omnigibson/tasks/behavior_task.py
+                pos, ori = self.env.task.object_scope[obj_name].get_position_orientation()
+                obj_states[obj_name] = np.concatenate([pos, ori])
+
+        # get default observations
+        other_obs = self.get_observation(di)
+
+        # combine all observations
+        obs_IL = {}
+        # merge with other observation types
+        obs_IL.update(robot_prop_states)
+        obs_IL.update(obj_states)       
+        obs_IL.update(other_obs)
+        return obs_IL
+    
+    def get_observation_list_IL(self):
+        # return the list of observation keys for IL baselines
+        obs = self.get_obs_IL()
+        obs_list = list(obs.keys())
+        return obs_list
 
     def get_state(self):
         """
