@@ -294,10 +294,12 @@ class EnvOmniGibson(EB.EnvBase):
         obj_states = {}
         obj_bddl_names = [obj.bddl_inst for obj in self.env._task.object_scope.values()] # get object names
         for obj_name in obj_bddl_names:
-            if 'agent' not in obj_name and 'robot' not in obj_name and 'table' not in obj_name and 'floor' not in obj_name:
-                # TODO: here not checking whether the object exist in the scene, may need to handle this silimar to omnigibson/tasks/behavior_task.py
-                pos, ori = self.env.task.object_scope[obj_name].get_position_orientation()
-                obj_states[obj_name] = np.concatenate([pos, ori])
+            # TODO: here not checking whether the object exist in the scene, may need to handle this silimar to omnigibson/tasks/behavior_task.py
+            pos, ori = self.env.task.object_scope[obj_name].get_position_orientation()
+            if 'agent' not in obj_name and 'robot' not in obj_name:
+                # remove the .n.01_1 suffix and only keep the object name
+                obj_name = "object::"+obj_name.split('.')[0]
+            obj_states[obj_name] = np.concatenate([pos, ori])
 
         # get default observations
         other_obs = self.get_observation(di)
