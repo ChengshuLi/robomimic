@@ -136,6 +136,9 @@ class EnvOmniGibson(EB.EnvBase):
             info (dict): extra information
         """
         obs, r, done, truncated, info = self.env.step(action)
+
+        # replace the observation with newly added IL obs function 
+        obs = self.get_obs_IL()
         # return obs, r, done, info
         # changed to output with truncated
         return obs, r, done, truncated, info
