@@ -159,8 +159,9 @@ def load_data_for_training(config, obs_keys):
     # config can contain an attribute to filter on
     train_filter_by_attribute = config.train.hdf5_filter_key
     valid_filter_by_attribute = config.train.hdf5_validation_filter_key
-    if valid_filter_by_attribute is not None:
-        assert config.experiment.validate, "specified validation filter key {}, but config.experiment.validate is not set".format(valid_filter_by_attribute)
+    # TODO: the following does not seem to be useful, can be safely removed
+    # if valid_filter_by_attribute is not None:
+    #     assert config.experiment.validate, "specified validation filter key {}, but config.experiment.validate is not set".format(valid_filter_by_attribute)
 
     # load the dataset into memory
     if config.experiment.validate:

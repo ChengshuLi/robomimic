@@ -117,7 +117,7 @@ def preprocess_omnigibson_dataset(dataset_path):
     f.close()
 
 
-def get_env_metadata_from_dataset(dataset_path, set_env_specific_obs_processors=True, ds_format=None):
+def get_env_metadata_from_dataset(dataset_path, set_env_specific_obs_processors=True, ds_format="robomimic"):
     """
     Retrieves env metadata from dataset.
 

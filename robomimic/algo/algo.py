@@ -231,7 +231,7 @@ class Algo(object):
             if k in batch and batch[k] is not None:
                 batch[k] = ObsUtils.process_obs_dict(batch[k])
                 if obs_normalization_stats is not None:
-                    batch[k] = ObsUtils.normalize_dict(batch[k], obs_normalization_stats=obs_normalization_stats)
+                    batch[k] = ObsUtils.normalize_dict(batch[k], normalization_stats=obs_normalization_stats)
         return batch
 
     def postprocess_batch_for_training(self, batch, obs_normalization_stats):
@@ -271,7 +271,7 @@ class Algo(object):
                     if d[k] is not None:
                         d[k] = ObsUtils.process_obs_dict(d[k])
                         if obs_normalization_stats is not None:
-                            d[k] = ObsUtils.normalize_dict(d[k], obs_normalization_stats=obs_normalization_stats)
+                            d[k] = ObsUtils.normalize_dict(d[k], normalization_stats=obs_normalization_stats)
                 elif isinstance(d[k], dict):
                     # search down into dictionary
                     recurse_helper(d[k])

@@ -248,6 +248,9 @@ class EnvOmniGibson(EB.EnvBase):
             obs, info = self.env.get_obs()
         else:
             raise ValueError(f"Unknown environment name: {self.name}")
+        
+        # change to the new observation
+        obs = self.get_obs_IL()
 
         return obs
     
@@ -285,6 +288,21 @@ class EnvOmniGibson(EB.EnvBase):
         """
         if mode == "human":
             og.sim.render()
+        elif mode == "rgb_array":
+            # # Add external sensor observations if they exist
+            # if self.env._external_sensors is not None:
+            #     external_obs = dict()
+            #     external_info = dict()
+            #     for sensor_name, sensor in self.env._external_sensors.items():
+            #         external_obs[sensor_name], external_info[sensor_name] = sensor.get_obs()
+            #     obs_sensor = external_obs
+            # img_dim_4 = obs_sensor['external_sensor0']['rgb']
+            # img = img_dim_4[:, :, :3] # 128x128x4 -> 128x128x3
+
+            img_dim_4 = og.sim.viewer_camera._get_obs()[0]['rgb']
+            img = img_dim_4[:, :, :3] # 720x1280x4 -> 720x1280x3
+            img = np.array(img, dtype=np.uint8)
+            return img
         else:
             return np.zeros((height if height else 128, width if width else 128, 3), dtype=np.uint8)
     
@@ -317,8 +335,13 @@ class EnvOmniGibson(EB.EnvBase):
         obs_IL = {}
         # merge with other observation types
         obs_IL.update(robot_prop_states)
-        obs_IL.update(obj_states)       
-        obs_IL.update(other_obs)
+        obs_IL.update(obj_states)
+
+        # TODO: need to add images back after setting up the camera
+        # obs_IL.update(other_obs)
+        # render_img = og.sim.viewer_camera._get_obs()[0]['rgb']
+        # obs_IL['render::rgb'] = np.array(render_img, dtype=np.uint8)
+        
         return obs_IL
     
     def get_observation_list_IL(self):
@@ -333,43 +356,6 @@ class EnvOmniGibson(EB.EnvBase):
 
         obs, info = self.env.get_obs()
         return obs
-    
-    def get_obs_IL(self, di=None):
-        """
-        Get observation for IL baselines
-         - robot proprioceptive state
-         - objects in the scene and their states
-         - default observations
-        """
-
-        # customize observation for IL baselines
-        robot_prop_states = self.env.robots[0]._get_proprioception_dict()
-
-        # get object states
-        obj_states = {}
-        obj_bddl_names = [obj.bddl_inst for obj in self.env._task.object_scope.values()] # get object names
-        for obj_name in obj_bddl_names:
-            if 'agent' not in obj_name and 'robot' not in obj_name and 'table' not in obj_name and 'floor' not in obj_name:
-                # TODO: here not checking whether the object exist in the scene, may need to handle this silimar to omnigibson/tasks/behavior_task.py
-                pos, ori = self.env.task.object_scope[obj_name].get_position_orientation()
-                obj_states[obj_name] = np.concatenate([pos, ori])
-
-        # get default observations
-        other_obs = self.get_observation(di)
-
-        # combine all observations
-        obs_IL = {}
-        # merge with other observation types
-        obs_IL.update(robot_prop_states)
-        obs_IL.update(obj_states)       
-        obs_IL.update(other_obs)
-        return obs_IL
-    
-    def get_observation_list_IL(self):
-        # return the list of observation keys for IL baselines
-        obs = self.get_obs_IL()
-        obs_list = list(obs.keys())
-        return obs_list
 
     def get_state(self):
         """
