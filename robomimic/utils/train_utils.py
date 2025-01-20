@@ -13,6 +13,8 @@ import imageio
 import numpy as np
 from copy import deepcopy
 from collections import OrderedDict
+import matplotlib.pyplot as plt  
+
 
 import torch
 
@@ -165,7 +167,7 @@ def load_data_for_training(config, obs_keys):
 
     # load the dataset into memory
     if config.experiment.validate:
-        assert not config.train.hdf5_normalize_obs, "no support for observation normalization with validation data yet"
+        # assert not config.train.hdf5_normalize_obs, "no support for observation normalization with validation data yet"
         assert (train_filter_by_attribute is not None) and (valid_filter_by_attribute is not None), \
             "did not specify filter keys corresponding to train and valid split in dataset" \
             " - please fill config.train.hdf5_filter_key and config.train.hdf5_validation_filter_key"
@@ -180,8 +182,14 @@ def load_data_for_training(config, obs_keys):
         )
         assert set(train_demo_keys).isdisjoint(set(valid_demo_keys)), "training demonstrations overlap with " \
             "validation demonstrations!"
-        train_dataset = dataset_factory(config, obs_keys, filter_by_attribute=train_filter_by_attribute)
-        valid_dataset = dataset_factory(config, obs_keys, filter_by_attribute=valid_filter_by_attribute)
+        # breakpoint()
+        # calculate normalizations stats with both train and val set
+        all_dataset = dataset_factory(config, obs_keys)
+        obs_normalization_stats = all_dataset.obs_normalization_stats
+        action_normalization_stats = all_dataset.get_action_normalization_stats()
+        # change the trainset and valset to the same obs_normalization_stats and action_normalization_stats
+        train_dataset = dataset_factory(config, obs_keys, filter_by_attribute=train_filter_by_attribute, obs_normalization_stats=obs_normalization_stats, action_normalization_stats=action_normalization_stats)
+        valid_dataset = dataset_factory(config, obs_keys, filter_by_attribute=valid_filter_by_attribute, obs_normalization_stats=obs_normalization_stats, action_normalization_stats=action_normalization_stats)
     else:
         train_dataset = dataset_factory(config, obs_keys, filter_by_attribute=train_filter_by_attribute)
         valid_dataset = None
@@ -189,7 +197,7 @@ def load_data_for_training(config, obs_keys):
     return train_dataset, valid_dataset
 
 
-def dataset_factory(config, obs_keys, filter_by_attribute=None, dataset_path=None):
+def dataset_factory(config, obs_keys, filter_by_attribute=None, dataset_path=None, obs_normalization_stats=None, action_normalization_stats=None):
     """
     Create a SequenceDataset instance to pass to a torch DataLoader.
 
@@ -227,6 +235,8 @@ def dataset_factory(config, obs_keys, filter_by_attribute=None, dataset_path=Non
         hdf5_cache_mode=config.train.hdf5_cache_mode,
         hdf5_use_swmr=config.train.hdf5_use_swmr,
         hdf5_normalize_obs=config.train.hdf5_normalize_obs,
+        obs_normalization_stats=obs_normalization_stats,
+        action_normalization_stats=action_normalization_stats,
         # filter_by_attribute=filter_by_attribute
     )
 
@@ -302,6 +312,7 @@ def run_rollout(
         video_writer=None,
         video_skip=5,
         terminate_on_success=False,
+        demo_actions=None
     ):
     """
     Runs a rollout in an environment with the current network parameters.
@@ -346,10 +357,78 @@ def run_rollout(
     got_exception = False
 
     try:
+        ac_list = []
+        
+        plot_action_norm_stats = False
+        if plot_action_norm_stats:
+            fig, ax = plt.subplots()
+            ax.plot(policy.action_normalization_stats['actions']['scale'].flatten(), label='action scale')
+            ax.plot(policy.action_normalization_stats['actions']['offset'].flatten(), label='action offset')
+            ax.legend()
+            plt.savefig('action_norm_stats.png')
+
         for step_i in range(horizon):
 
             # get action from policy
-            ac = policy(ob=ob_dict, goal=goal_dict)
+            ac_n, ac = policy(ob=ob_dict, goal=goal_dict)
+
+            sanity_check_action_plot = True
+            if sanity_check_action_plot:
+
+                print("")
+                print('step', step_i)
+                print('ac', ac)
+                if step_i < demo_actions.shape[0]:
+                    ac_diff = demo_actions[step_i] - ac
+                    print('demo', demo_actions[step_i])
+                    print('diff', ac_diff)
+                print("")
+
+                ac_ref = None
+                ac_ref_n = None
+                if step_i < demo_actions.shape[0]:
+                    ac_ref = demo_actions[step_i]
+                    ac_dict = OrderedDict()
+                    for k in ['actions']:
+                        ac_dict[k] = ac_ref.reshape(1, -1)
+                    # normalize actions
+                    action_normalization_stats = policy.action_normalization_stats
+                    ac_dict = ObsUtils.normalize_dict(ac_dict, normalization_stats=action_normalization_stats)
+                    ac_ref_n = ac_dict['actions'].squeeze()
+
+                ac1_n, ac1 = policy(ob=ob_dict, goal=goal_dict)
+                ac2_n, ac2 = policy(ob=ob_dict, goal=goal_dict)
+                ac3_n, ac3 = policy(ob=ob_dict, goal=goal_dict)
+                                
+                fig, ax = plt.subplots()
+                ax.plot(ac, label='ac')
+                ax.plot(ac1, label='ac1')
+                ax.plot(ac2, label='ac2')
+                ax.plot(ac3, label='ac3')
+                if ac_ref is not None:
+                    ax.plot(ac_ref, label='ref', linewidth=2, marker='o')
+                ax.legend()
+                plt.savefig(f'ac_{step_i}.png')
+
+                fig, ax = plt.subplots()
+                ax.plot(ac_n, label='ac_n')
+                ax.plot(ac1_n, label='ac1_n')
+                ax.plot(ac2_n, label='ac2_n')
+                ax.plot(ac3_n, label='ac3_n')
+                if ac_ref_n is not None:
+                    ax.plot(ac_ref_n, label='ref after norm', linewidth=2, marker='o')
+                ax.legend()
+                plt.savefig(f'ac_n_{step_i}.png')
+
+                ax.set_ylim(-1, 1)
+                
+                ax.legend()
+                # plt.pause(0.5)
+                # plt.show()
+                # breakpoint()
+                # assert not np.allclose(ac1, ac), "policy is not deterministic"
+            
+            ac_list.append(ac)
 
             # play action
             ob_dict, r, done, truncated, _ = env.step(ac)
@@ -385,6 +464,7 @@ def run_rollout(
     results["Horizon"] = step_i + 1
     results["Success_Rate"] = float(success["task"])
     results["Exception_Rate"] = float(got_exception)
+    results["actions"] = ac_list
 
     # log additional success metrics
     for k in success:
@@ -407,6 +487,7 @@ def rollout_with_stats(
         video_skip=5,
         terminate_on_success=False,
         verbose=False,
+        demo_actions=None
     ):
     """
     A helper function used in the train loop to conduct evaluation rollouts per environment
@@ -482,8 +563,10 @@ def rollout_with_stats(
             iterator = LogUtils.custom_tqdm(iterator, total=num_episodes)
 
         num_success = 0
+        action_info = []
         for ep_i in iterator:
             rollout_timestamp = time.time()
+            breakpoint()
             rollout_info = run_rollout(
                 policy=policy,
                 env=env,
@@ -493,7 +576,9 @@ def rollout_with_stats(
                 video_writer=env_video_writer,
                 video_skip=video_skip,
                 terminate_on_success=terminate_on_success,
+                demo_actions=demo_actions
             )
+            action_info.append(rollout_info["actions"])
             rollout_info["time"] = time.time() - rollout_timestamp
             rollout_logs.append(rollout_info)
             num_success += rollout_info["Success_Rate"]
@@ -515,7 +600,7 @@ def rollout_with_stats(
         # close video writer that was used for all envs
         video_writer.close()
 
-    return all_rollout_logs, video_paths
+    return all_rollout_logs, video_paths, action_info
 
 
 def should_save_from_rollout_logs(
@@ -630,7 +715,7 @@ def save_model(model, config, env_meta, shape_meta, ckpt_path, obs_normalization
     print("save checkpoint to {}".format(ckpt_path))
 
 
-def run_epoch(model, data_loader, epoch, validate=False, num_steps=None, obs_normalization_stats=None):
+def run_epoch(model, data_loader, epoch, validate=False, num_steps=None, obs_normalization_stats=None, action_normalization_stats=None):
     """
     Run an epoch of training or validation.
 
@@ -683,13 +768,19 @@ def run_epoch(model, data_loader, epoch, validate=False, num_steps=None, obs_nor
 
         # process batch for training
         t = time.time()
+        # print('breakpoint before processing batch')
+        # breakpoint()
+        raw_actions = batch['raw_actions']
+
         input_batch = model.process_batch_for_training(batch)
         input_batch = model.postprocess_batch_for_training(input_batch, obs_normalization_stats=obs_normalization_stats)
         timing_stats["Process_Batch"].append(time.time() - t)
 
+        input_batch['raw_actions'] = raw_actions
+
         # forward and backward pass
         t = time.time()
-        info = model.train_on_batch(input_batch, epoch, validate=validate)
+        info = model.train_on_batch(input_batch, epoch, validate=validate, action_normalization_stats=action_normalization_stats)
         timing_stats["Train_Batch"].append(time.time() - t)
 
         # tensorboard logging

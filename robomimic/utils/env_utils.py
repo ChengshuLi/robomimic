@@ -305,6 +305,7 @@ def create_env_for_data_processing(
     render_offscreen=None,
     use_image_obs=None,
     use_depth_obs=None,
+    init_curobo=True,
 ):
     """
     Creates environment for processing dataset observations and rewards.
@@ -340,6 +341,7 @@ def create_env_for_data_processing(
     if env_class is None:
         env_class = get_env_class(env_type=env_type)
 
+    env_kwargs["init_curobo"] = init_curobo
     if env_type == EB.EnvType.OG_TYPE:
         return env_class.create_for_data_processing(env_name=env_name, **env_kwargs)
 

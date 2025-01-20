@@ -11,7 +11,7 @@ import textwrap
 import time
 from tqdm import tqdm
 from termcolor import colored
-
+import wandb
 import robomimic
 
 # global list of warning messages can be populated with @log_warning and flushed with @flush_warnings
@@ -44,7 +44,7 @@ class DataLogger(object):
     """
     Logging class to log metrics to tensorboard and/or retrieve running statistics about logged data.
     """
-    def __init__(self, log_dir, config, log_tb=True, log_wandb=False):
+    def __init__(self, log_dir, config, log_tb=True, log_wandb=False, run_id=None):
         """
         Args:
             log_dir (str): base path to store logs
@@ -52,6 +52,8 @@ class DataLogger(object):
         """
         self._tb_logger = None
         self._wandb_logger = None
+        self.log_tb = log_tb
+        self.log_wandb = log_wandb
         self._data = dict() # store all the scalar data logged so far
 
         if log_tb:
@@ -59,7 +61,7 @@ class DataLogger(object):
             self._tb_logger = SummaryWriter(os.path.join(log_dir, 'tb'))
 
         if log_wandb:
-            import wandb
+            # import wandb
             import robomimic.macros as Macros
 
             # set up wandb api key if specified in macros
@@ -75,15 +77,28 @@ class DataLogger(object):
             for attempt in range(num_attempts):
                 try:
                     # set up wandb
-                    self._wandb_logger = wandb
-
-                    self._wandb_logger.init(
-                        entity=Macros.WANDB_ENTITY,
-                        project=config.experiment.logging.wandb_proj_name,
-                        name=config.experiment.name,
-                        dir=log_dir,
-                        mode=("offline" if attempt == num_attempts - 1 else "online"),
-                    )
+                    # self._wandb_logger = wandb
+                    # self._wandb_logger.init(
+                    # if run_id is not None:
+                    # # todo: the current resume run is not working
+                    #     wandb.init(
+                    #         entity=Macros.WANDB_ENTITY,
+                    #         project=config.experiment.logging.wandb_proj_name,
+                    #         name=config.experiment.name,
+                    #         dir=log_dir,
+                    #         mode=("offline" if attempt == num_attempts - 1 else "online"),
+                    #         id=run_id,
+                    #         resume="allow"
+                    #     )
+                    # else:
+                    if True:
+                        wandb.init(
+                            entity=Macros.WANDB_ENTITY,
+                            project=config.experiment.logging.wandb_proj_name,
+                            name=config.experiment.name,
+                            dir=log_dir,
+                            mode=("offline" if attempt == num_attempts - 1 else "online"),
+                        )
 
                     # # set up info for identifying experiment
                     # wandb_config = {k: v for (k, v) in config.meta.items() if k not in ["hp_keys", "hp_values"]}
@@ -94,7 +109,8 @@ class DataLogger(object):
                     
                     # log all the configs to wandb
                     wandb_config = config
-                    self._wandb_logger.config.update(wandb_config)
+                    # self._wandb_logger.config.update(wandb_config)
+                    wandb.config.update(wandb_config)
 
                     break
                 except Exception as e:
@@ -134,14 +150,17 @@ class DataLogger(object):
             elif data_type == 'image':
                 self._tb_logger.add_images(k, img_tensor=v, global_step=epoch, dataformats="NHWC")
 
-        if self._wandb_logger is not None:
+        # if self._wandb_logger is not None:
+        if self.log_wandb:
             try:
                 if data_type == 'scalar':
-                    self._wandb_logger.log({k: v}, step=epoch)
+                    # self._wandb_logger.log({k: v}, step=epoch)
+                    wandb.log({k: v}, step=epoch)
                     if log_stats:
                         stats = self.get_stats(k)
                         for (stat_k, stat_v) in stats.items():
-                            self._wandb_logger.log({"{}/{}".format(k, stat_k): stat_v}, step=epoch)
+                            # self._wandb_logger.log({"{}/{}".format(k, stat_k): stat_v}, step=epoch)
+                            wandb.log({"{}/{}".format(k, stat_k): stat_v}, step=epoch)
                 elif data_type == 'image':
                     raise NotImplementedError
             except Exception as e:
@@ -169,8 +188,13 @@ class DataLogger(object):
         if self._tb_logger is not None:
             self._tb_logger.close()
 
-        if self._wandb_logger is not None:
-            self._wandb_logger.finish()
+        # if self._wandb_logger is not None:
+        if self.log_wandb:
+            print('testttttttingggggggg')
+            print("")
+            import pdb; pdb.set_trace()
+            # self._wandb_logger.finish()
+            wandb.finish()
 
 
 class custom_tqdm(tqdm):

@@ -36,6 +36,8 @@ class SequenceDataset(torch.utils.data.Dataset):
         hdf5_normalize_obs=False,
         filter_by_attribute=None,
         load_next_obs=True,
+        obs_normalization_stats=None,
+        action_normalization_stats=None,
     ):
         """
         Dataset class for fetching sequences of experience.
@@ -130,10 +132,17 @@ class SequenceDataset(torch.utils.data.Dataset):
         # maybe prepare for observation normalization
         self.obs_normalization_stats = None
         if self.hdf5_normalize_obs:
-            self.obs_normalization_stats = self.normalize_obs()
+            if obs_normalization_stats is not None:
+                self.obs_normalization_stats = obs_normalization_stats
+            else:
+                self.obs_normalization_stats = self.normalize_obs()
 
         # prepare for action normalization
         self.action_normalization_stats = None
+        if action_normalization_stats is not None:
+            self.action_normalization_stats = action_normalization_stats
+        else:
+            self.action_normalization_stats = self.get_action_normalization_stats()
 
         # maybe store dataset in memory for fast access
         if self.hdf5_cache_mode in ["all", "low_dim"]:
@@ -333,11 +342,18 @@ class SequenceDataset(torch.utils.data.Dataset):
             traj_stats = _compute_traj_stats(obs_traj)
             merged_stats = _aggregate_traj_stats(merged_stats, traj_stats)
 
+        # breakpoint()
         obs_normalization_stats = { k : {} for k in merged_stats }
         for k in merged_stats:
-            # note we add a small tolerance of 1e-3 for std
-            obs_normalization_stats[k]["mean"] = merged_stats[k]["mean"].astype(np.float32)
-            obs_normalization_stats[k]["std"] = (np.sqrt(merged_stats[k]["sqdiff"] / merged_stats[k]["n"]) + 1e-3).astype(np.float32)
+            if "point_cloud" in k:
+                n_points = obs_traj["combined::point_cloud"].shape[1]
+                obs_normalization_stats[k]["mean"] = np.broadcast_to(obs_traj["combined::point_cloud"].mean(axis=(0, 1)).astype(np.float32).reshape((1, 1, 3)), (1, n_points, 3))
+                obs_normalization_stats[k]["std"] = np.broadcast_to((obs_traj["combined::point_cloud"].std(axis=(0, 1)).max(keepdims=True) + 1e-3).astype(np.float32).reshape((1, 1, 1)), (1, n_points, 3))
+            else:
+                # note we add a small tolerance of 1e-3 for std
+                obs_normalization_stats[k]["mean"] = merged_stats[k]["mean"].astype(np.float32)
+                obs_normalization_stats[k]["std"] = (np.sqrt(merged_stats[k]["sqdiff"] / merged_stats[k]["n"]) + 1e-3).astype(np.float32)
+        # breakpoint()
         return obs_normalization_stats
 
     def get_obs_normalization_stats(self):
@@ -496,8 +512,13 @@ class SequenceDataset(torch.utils.data.Dataset):
             ac_dict[k] = ac
        
         # normalize actions
-        action_normalization_stats = self.get_action_normalization_stats()
-        ac_dict = ObsUtils.normalize_dict(ac_dict, normalization_stats=action_normalization_stats)
+        # print('checkpoint in dataset.py get_item')
+        # import pdb; pdb.set_trace()
+        meta['raw_actions'] = deepcopy(ac_dict)
+        
+        # modification: remove the following action normalization since it is based on the current dataset when loading, and not using the normalizaiton stats passed in from the outside
+        # action_normalization_stats = self.get_action_normalization_stats()
+        ac_dict = ObsUtils.normalize_dict(ac_dict, normalization_stats=self.action_normalization_stats)
 
         # concatenate all action components
         meta["actions"] = AcUtils.action_dict_to_vector(ac_dict)
@@ -1080,17 +1101,18 @@ def action_stats_to_normalization_stats(action_stats, action_config):
             }
         elif norm_method == "min_max":
             # normalize min to -1 and max to 1
-            range_eps = 1e-4
-            input_min = action_stats[action_key]["min"].astype(np.float32)
-            input_max = action_stats[action_key]["max"].astype(np.float32)
+            # range_eps = 1e-4
+            new_range_eps = 1e-8
+            input_min = action_stats[action_key]["min"].astype(np.float32) - new_range_eps / 2
+            input_max = action_stats[action_key]["max"].astype(np.float32) + new_range_eps / 2
             # instead of -1 and 1 use numbers just below threshold to prevent numerical instability issues
-            output_min = -0.999999
-            output_max = 0.999999
+            output_min = -0.9999 # -0.999999
+            output_max = 0.9999 # 0.999999
             
             # ignore input dimentions that is too small to prevent division by zero
             input_range = input_max - input_min
-            ignore_dim = input_range < range_eps
-            input_range[ignore_dim] = output_max - output_min    
+            # ignore_dim = input_range < range_eps
+            # input_range[ignore_dim] = output_max - output_min    
 
             # expected usage of scale and offset
             # normalized_action = (raw_action - offset) / scale
@@ -1107,7 +1129,7 @@ def action_stats_to_normalization_stats(action_stats, action_config):
             scale = input_range / (output_max - output_min)
             offset = input_min - scale * output_min
 
-            offset[ignore_dim] = input_min[ignore_dim] - (output_max + output_min) / 2
+            # offset[ignore_dim] = input_min[ignore_dim] - (output_max + output_min) / 2
 
             action_normalization_stats[action_key] = {
                 "scale": scale,

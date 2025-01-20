@@ -164,6 +164,7 @@ def train(config, device, auto_remove_exp=False):
     # maybe retreve statistics for normalizing observations
     obs_normalization_stats = None
     if config.train.hdf5_normalize_obs:
+        breakpoint()
         obs_normalization_stats = trainset.get_obs_normalization_stats()
 
     # maybe retreve statistics for normalizing actions

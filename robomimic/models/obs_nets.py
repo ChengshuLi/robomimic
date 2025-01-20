@@ -22,7 +22,7 @@ from robomimic.utils.python_utils import extract_class_init_kwargs_from_dict
 import robomimic.utils.tensor_utils as TensorUtils
 import robomimic.utils.obs_utils as ObsUtils
 from robomimic.models.base_nets import Module, Sequential, MLP, RNN_Base, ResNet18Conv, SpatialSoftmax, \
-    FeatureAggregator
+    FeatureAggregator, PointNet, SetTransformer, SetXFPCDEncoder
 from robomimic.models.obs_core import VisualCore, Randomizer
 from robomimic.models.transformers import PositionalEncoding, GPT_Backbone
 
@@ -83,6 +83,20 @@ def obs_encoder_factory(
         # Add in input shape info
         randomizer = None if enc_kwargs["obs_randomizer_class"] is None else \
             ObsUtils.OBS_RANDOMIZERS[enc_kwargs["obs_randomizer_class"]](**enc_kwargs["obs_randomizer_kwargs"])
+
+        if "point_cloud" in k:
+            ObsUtils.register_encoder_core(PointNet)
+            enc_kwargs["core_class"] = 'PointNet'
+            enc_kwargs["core_kwargs"] = {'input_dim': 3, # x,y,z
+                                        'output_dim': 64,
+                                        'layer_dims': [32, 64, 128, 256]}
+
+            # ObsUtils.register_encoder_core(SetXFPCDEncoder)
+            # enc_kwargs["core_class"] = 'SetXFPCDEncoder'
+            # enc_kwargs["core_kwargs"] = {'n_coordinates': 6,
+            #                             'ee_embd_dim': 64,
+            #                             'hidden_dim': 128,
+            #                             'output_dim': 64}
 
         enc.register_obs_key(
             name=k,
@@ -414,6 +428,7 @@ class ObservationGroupEncoder(Module):
                 feature_activation=feature_activation,
                 encoder_kwargs=encoder_kwargs,
             )
+            print(self.nets)
 
     def forward(self, **inputs):
         """

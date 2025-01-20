@@ -19,6 +19,7 @@ import robomimic.models.obs_nets as ObsNets
 import robomimic.utils.tensor_utils as TensorUtils
 import robomimic.utils.torch_utils as TorchUtils
 import robomimic.utils.obs_utils as ObsUtils
+import robomimic.utils.action_utils as AcUtils
 
 from robomimic.algo import register_algo_factory_func, PolicyAlgo
 
@@ -103,10 +104,12 @@ class DiffusionPolicyUNet(PolicyAlgo):
         # setup EMA
         ema = None
         if self.algo_config.ema.enabled:
+            # TODO: dexcap change 1, change parameters to directly input the model and net
             ema = EMAModel(parameters=nets.parameters(), power=self.algo_config.ema.power)
                 
         # set attrs
         self.nets = nets
+        # TODO: dexcap removed the shadow nets
         self._shadow_nets = copy.deepcopy(self.nets).eval()
         self._shadow_nets.requires_grad_(False)
         self.noise_scheduler = noise_scheduler
@@ -142,13 +145,18 @@ class DiffusionPolicyUNet(PolicyAlgo):
             actions = input_batch["actions"]
             in_range = (-1 <= actions) & (actions <= 1)
             all_in_range = torch.all(in_range).item()
+
+            # print('actions', torch.max(actions), torch.min(actions))
+            # print(all_in_range)
+            # import pdb; pdb.set_trace()
+
             if not all_in_range:
                 raise ValueError('"actions" must be in range [-1,1] for Diffusion Policy! Check if hdf5_normalize_action is enabled.')
             self.action_check_done = True
         
         return TensorUtils.to_device(TensorUtils.to_float(input_batch), self.device)
         
-    def train_on_batch(self, batch, epoch, validate=False):
+    def train_on_batch(self, batch, epoch, validate=False, action_normalization_stats=None):
         """
         Training on a single batch of data.
 
@@ -174,8 +182,8 @@ class DiffusionPolicyUNet(PolicyAlgo):
         
         with TorchUtils.maybe_no_grad(no_grad=validate):
             info = super(DiffusionPolicyUNet, self).train_on_batch(batch, epoch, validate=validate)
-            actions = batch['actions']
-            
+            actions = batch['actions'] # normalized actions, not raw actions
+
             # encode obs
             inputs = {
                 'obs': batch["obs"],
@@ -184,37 +192,122 @@ class DiffusionPolicyUNet(PolicyAlgo):
             for k in self.obs_shapes:
                 # first two dimensions should be [B, T] for inputs
                 assert inputs['obs'][k].ndim - 2 == len(self.obs_shapes[k])
+
+            # torch.Size([16, 3, 1024, 3])
+            # torch.Size([16, 3, 3])
+            # torch.Size([16, 3, 4])
+            # torch.Size([16, 3, 3])
+            # torch.Size([16, 3, 4])
+            # torch.Size([16, 3, 7])
+            # torch.Size([16, 3, 7])
+
             
             obs_features = TensorUtils.time_distributed(inputs, self.nets['policy']['obs_encoder'], inputs_as_kwargs=True)
-            assert obs_features.ndim == 3  # [B, T, D]
+            assert obs_features.ndim == 3  # [B, To, D]
 
             obs_cond = obs_features.flatten(start_dim=1)
+
+            # print('breakpoint when train on batch in diffusion policy')
+            # breakpoint()
             
             # sample noise to add to actions
-            noise = torch.randn(actions.shape, device=self.device)
+            noise = torch.randn(actions.shape, device=self.device) # torch.Size([B, Tp, action_dim])
             
             # sample a diffusion iteration for each data point
             timesteps = torch.randint(
                 0, self.noise_scheduler.config.num_train_timesteps, 
                 (B,), device=self.device
-            ).long()
+            ).long() # torch.Size([B]), ranging from 0 to num_train_timesteps
             
             # add noise to the clean actions according to the noise magnitude at each diffusion iteration
             # (this is the forward diffusion process)
             noisy_actions = self.noise_scheduler.add_noise(
-                actions, noise, timesteps)
-            
+                actions, noise, timesteps) # torch.Size([B, Tp, action_dim])
+                        
             # predict the noise residual
             noise_pred = self.nets['policy']['noise_pred_net'](
-                noisy_actions, timesteps, global_cond=obs_cond)
+                noisy_actions, timesteps, global_cond=obs_cond) # torch.Size([B, Tp, action_dim])
             
             # L2 loss
             loss = F.mse_loss(noise_pred, noise)
-            
+
             # logging
             losses = {
                 'l2_loss': loss
             }
+
+            L2_loss_log = True
+            if L2_loss_log:
+                with torch.no_grad():
+                    self.nets.eval()
+                    # print('checkpoint when calculating the action L2 loss')
+                    # breakpoint()
+                    # naction = noisy_actions # modification, change this to random noise
+                    naction = torch.randn((B, Tp, action_dim), device=self.device)
+
+                    if self.algo_config.ddpm.enabled is True:
+                        num_inference_timesteps = self.algo_config.ddpm.num_inference_timesteps
+                    elif self.algo_config.ddim.enabled is True:
+                        num_inference_timesteps = self.algo_config.ddim.num_inference_timesteps
+                    else:
+                        raise ValueError
+                    
+                    # select network
+                    nets = self.nets
+                    if self.ema is not None:
+                        self.ema.copy_to(parameters=self._shadow_nets.parameters())
+                        nets = self._shadow_nets
+                    # init scheduler
+                    self.noise_scheduler.set_timesteps(num_inference_timesteps)
+
+                    for k in self.noise_scheduler.timesteps:
+                        # predict noise
+                        noise_pred = nets['policy']['noise_pred_net'](
+                            sample=naction, 
+                            timestep=k,
+                            global_cond=obs_cond
+                        )
+
+                        # inverse diffusion step (remove noise)
+                        naction = self.noise_scheduler.step(
+                            model_output=noise_pred,
+                            timestep=k,
+                            sample=naction
+                        ).prev_sample
+
+                    # process action using Ta
+                    start = To - 1
+                    end = start + Ta
+                    action_pred = naction[:,start:end]
+                    action_gt = actions[:,start:end]
+
+                    normalized_action_l2_loss = F.mse_loss(action_pred, action_gt)
+                    losses["normalized_action_l2_loss"] = normalized_action_l2_loss
+
+                    # calculate raw action loss
+                    if action_normalization_stats is not None:
+                        # sanity check whether raw action normalize and denormalize is the same
+                        raw_actions_dict = batch['raw_actions']
+                        n_raw_actions_dict = ObsUtils.normalize_dict(raw_actions_dict, normalization_stats=action_normalization_stats)
+                        un_raw_actions_dict = ObsUtils.unnormalize_dict(n_raw_actions_dict, normalization_stats=action_normalization_stats)
+                        assert torch.allclose(raw_actions_dict['actions'], un_raw_actions_dict['actions'])
+
+                        # following the unnormalization process in _call_ function in algo.py
+                        action_keys = ['actions']
+                        action_shapes = {}
+                        action_shapes['actions']= action_normalization_stats['actions']["offset"].shape[1:]
+                        action_pred_dict = AcUtils.vector_to_action_dict(action_pred.detach().cpu().numpy(), action_shapes=action_shapes, action_keys=action_keys)
+                        un_action_pred_dict = ObsUtils.unnormalize_dict(action_pred_dict, normalization_stats=action_normalization_stats)
+                        # change tensor to device
+                        # change numpy to tensor
+
+                        un_action_pred = torch.from_numpy(un_action_pred_dict['actions'])
+                        un_action_gt = raw_actions_dict['actions'][:,start:end]
+                        unnormalized_action_l2_loss = F.mse_loss(un_action_pred, un_action_gt)
+                        losses["unnormalized_action_l2_loss"] = unnormalized_action_l2_loss
+                
+                self.nets.train()
+
             info["losses"] = TensorUtils.detach(losses)
 
             if not validate:
@@ -228,6 +321,9 @@ class DiffusionPolicyUNet(PolicyAlgo):
                 # update Exponential Moving Average of the model weights
                 if self.ema is not None:
                     self.ema.step(self.nets.parameters())
+
+                    # # TODO: dexcap 
+                    # self.ema.step(self.nets)
                 
                 step_info = {
                     'policy_grad_norms': policy_grad_norms
@@ -249,6 +345,10 @@ class DiffusionPolicyUNet(PolicyAlgo):
         """
         log = super(DiffusionPolicyUNet, self).log_info(info)
         log["Loss"] = info["losses"]["l2_loss"].item()
+        if "normalized_action_l2_loss" in info["losses"].keys():
+            log["normalized_action_l2_loss"] = info["losses"]["normalized_action_l2_loss"].item()
+        if "unnormalized_action_l2_loss" in info["losses"].keys():
+            log["unnormalized_action_l2_loss"] = info["losses"]["unnormalized_action_l2_loss"].item()
         if "policy_grad_norms" in info:
             log["Policy_Grad_Norms"] = info["policy_grad_norms"]
         return log
@@ -279,6 +379,8 @@ class DiffusionPolicyUNet(PolicyAlgo):
         # obs_dict: key: [1,D]
         To = self.algo_config.horizon.observation_horizon
         Ta = self.algo_config.horizon.action_horizon
+
+        # print(obs_dict['agentview_image'].size(), obs_dict['robot0_eef_pos'].size())
 
         # TODO: obs_queue already handled by frame_stack
         # make sure we have at least To observations in obs_queue
@@ -327,6 +429,9 @@ class DiffusionPolicyUNet(PolicyAlgo):
         if self.ema is not None:
             self.ema.copy_to(parameters=self._shadow_nets.parameters())
             nets = self._shadow_nets
+
+            # # TODO: dexcap changed to average mode
+            # nets = self.ema.averaged_model
         
         # encode obs
         inputs = {
@@ -335,6 +440,10 @@ class DiffusionPolicyUNet(PolicyAlgo):
         }
         for k in self.obs_shapes:
             # first two dimensions should be [B, T] for inputs
+            # print(k)
+            # print('obs shape', inputs['obs'][k].shape)
+            # print(self.obs_shapes[k])
+            # import pdb; pdb.set_trace()
             assert inputs['obs'][k].ndim - 2 == len(self.obs_shapes[k])
         obs_features = TensorUtils.time_distributed(inputs, self.nets['policy']['obs_encoder'], inputs_as_kwargs=True)
         assert obs_features.ndim == 3  # [B, T, D]
@@ -381,6 +490,12 @@ class DiffusionPolicyUNet(PolicyAlgo):
             "ema": self.ema.state_dict() if self.ema is not None else None,
         }
 
+        # # TODO: dexcap use ema everage model
+        # return {
+        #         "nets": self.nets.state_dict(),
+        #         "ema": self.ema.averaged_model.state_dict() if self.ema is not None else None,
+        #     }
+
     def deserialize(self, model_dict):
         """
         Load model from a checkpoint.
@@ -390,8 +505,12 @@ class DiffusionPolicyUNet(PolicyAlgo):
                 the same keys as @self.network_classes
         """
         self.nets.load_state_dict(model_dict["nets"])
+        print('model loaded')
         if model_dict.get("ema", None) is not None:
+            print('load ema states')
             self.ema.load_state_dict(model_dict["ema"])
+            # TODO: dexcap use ema average model
+            # self.ema.averaged_model.load_state_dict(model_dict["ema"])
         
 
 # =================== Vision Encoder Utils =====================

@@ -16,6 +16,7 @@ import omnigibson.utils.transform_utils as T
 from omnigibson.objects.primitive_object import PrimitiveObject
 from omnigibson.action_primitives.curobo import CuroboEmbodimentSelection, CuRoboMotionGenerator
 
+from mimicgen.train_scripts.train_prep_data import compute_point_cloud_from_depth
 
 import torch as th
 import numpy as np
@@ -117,11 +118,12 @@ class EnvOmniGibson(EB.EnvBase):
             og.sim.step()
 
         # Create CuRobo instance
-        self.cmg = CuRoboMotionGenerator(
-            robot=self.env.robots[0],
-            batch_size=1,
-            use_cuda_graph=True,
-        )
+        if self._init_kwargs['init_curobo']:
+            self.cmg = CuRoboMotionGenerator(
+                robot=self.env.robots[0],
+                batch_size=1,
+                use_cuda_graph=True,
+            )
 
     def step(self, action):
         """
@@ -215,11 +217,35 @@ class EnvOmniGibson(EB.EnvBase):
         Returns:
             observation (dict): initial observation dictionary.
         """
-        obs, info = self.env.reset()
+        # obs, info = self.env.reset()
+
+        # Reset the task
+        self.env.task.reset(self.env)
+
+        # Reset internal variables
+        self.env._reset_variables()
+
+        # Run a single simulator step to make sure we can grab updated observations
+        og.sim.step()
+
+        # Grab and return observations
+        obs, _ = self.env.get_obs()
+
+        info = {}
 
         # D0 is the original distribution (no randomization at all - deterministic reset)
         if self.name.endswith("D0"):
-            pass
+            if self.name.startswith("test_tiago_cup"):
+                # hardcode for the test_tiago_cup task
+                task_relevant_objs = self._get_task_relevant_objs()
+                for obj in task_relevant_objs:
+                    if 'coffee' in obj.name:
+                        pos, orn = obj.get_position_orientation()
+                        pos_diff = th.from_numpy(np.array([0.01, -0.01, 0.0])).float()
+                        pos += pos_diff
+                        obj.set_position_orientation(pos, orn)
+            else:
+                pass
 
         # D1 is the distribution with randomization in xy-pos and z-rot
         elif self.name.endswith("D1"):
@@ -306,6 +332,33 @@ class EnvOmniGibson(EB.EnvBase):
         else:
             return np.zeros((height if height else 128, width if width else 128, 3), dtype=np.uint8)
     
+    def get_pointcloud(self, obs):
+        """
+        Get point cloud from the environment
+        """
+        depth_img = obs['external::external_sensor0::depth_linear']
+        K = np.array([
+        [259.6039,   0.0000, 160.0000],
+        [  0.0000, 280.2977,  90.0000],
+        [  0.0000,   0.0000,   1.0000]
+        ])
+        # get world to camera transform
+        camera_position = th.tensor([ 1.0304, -0.0309,  1.0272])
+        camera_quat= th.tensor([0.2690, 0.2659, 0.6509, 0.6583])
+        world_to_cam_tf = T.pose2mat((camera_position, camera_quat)).numpy()
+
+        pointcloud = compute_point_cloud_from_depth(
+            depth_img, K, 
+            cam_to_img_tf=None, 
+            world_to_cam_tf=world_to_cam_tf, 
+            pcd_step_vis=False, 
+            max_depth=2,
+            sample_type='fps',
+            num_points_to_sample=2048,
+            clip_scene=True
+            )
+        return pointcloud
+
     def get_obs_IL(self, di=None):
         """
         Get observation for IL baselines
@@ -317,16 +370,19 @@ class EnvOmniGibson(EB.EnvBase):
         # customize observation for IL baselines
         robot_prop_states = self.env.robots[0]._get_proprioception_dict()
 
+        base_link_pose = self.env.robots[0].get_position_orientation()
+
         # get object states
         obj_states = {}
         obj_bddl_names = [obj.bddl_inst for obj in self.env._task.object_scope.values()] # get object names
         for obj_name in obj_bddl_names:
             # TODO: here not checking whether the object exist in the scene, may need to handle this silimar to omnigibson/tasks/behavior_task.py
             pos, ori = self.env.task.object_scope[obj_name].get_position_orientation()
+            local_pos, local_ori = T.relative_pose_transform(pos, ori, *base_link_pose)
             if 'agent' not in obj_name and 'robot' not in obj_name:
                 # remove the .n.01_1 suffix and only keep the object name
                 obj_name = "object::"+obj_name.split('.')[0]
-            obj_states[obj_name] = np.concatenate([pos, ori])
+            obj_states[obj_name] = np.concatenate([local_pos, local_ori])
 
         # get default observations
         other_obs = self.get_observation(di)
@@ -338,11 +394,15 @@ class EnvOmniGibson(EB.EnvBase):
         obs_IL.update(obj_states)
 
         # TODO: need to add images back after setting up the camera
-        # obs_IL.update(other_obs)
+        obs_IL.update(other_obs)
         # render_img = og.sim.viewer_camera._get_obs()[0]['rgb']
         # obs_IL['render::rgb'] = np.array(render_img, dtype=np.uint8)
-        
-        return obs_IL
+
+        # add point cloud
+        pcd = self.get_pointcloud(other_obs)
+        obs_IL['combined::point_cloud'] = pcd
+
+        return obs_IL        
     
     def get_observation_list_IL(self):
         # return the list of observation keys for IL baselines
@@ -415,6 +475,7 @@ class EnvOmniGibson(EB.EnvBase):
     ):
         # Always flatten observation space for data processing
         kwargs["env"]["flatten_obs_space"] = True
+        # breakpoint()
         return cls(env_name=env_name, **kwargs)
 
     @property
@@ -476,4 +537,7 @@ class EnvOmniGibson(EB.EnvBase):
         """
         Returns dimension of actions (int).
         """
-        raise NotImplementedError
+        if 'tiago' in self.name:
+            return 22
+        else:
+            raise NotImplementedError
