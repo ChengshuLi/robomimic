@@ -514,7 +514,7 @@ def policy_from_checkpoint(device=None, ckpt_path=None, ckpt_dict=None, verbose=
     )
     model.deserialize(ckpt_dict["model"])
     model.set_eval()
-    model = RolloutPolicy(
+    policy = RolloutPolicy(
         model,
         obs_normalization_stats=obs_normalization_stats,
         action_normalization_stats=action_normalization_stats
@@ -522,7 +522,7 @@ def policy_from_checkpoint(device=None, ckpt_path=None, ckpt_dict=None, verbose=
     if verbose:
         print("============= Loaded Policy =============")
         print(model)
-    return model, ckpt_dict
+    return policy, ckpt_dict, model
 
 
 def env_from_checkpoint(ckpt_path=None, ckpt_dict=None, env_name=None, render=False, render_offscreen=False, verbose=False):

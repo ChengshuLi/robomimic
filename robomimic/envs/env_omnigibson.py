@@ -21,6 +21,7 @@ from mimicgen.train_scripts.train_prep_data import compute_point_cloud_from_dept
 import torch as th
 import numpy as np
 import gym
+import time
 
 
 from omnigibson.macros import gm
@@ -125,6 +126,8 @@ class EnvOmniGibson(EB.EnvBase):
                 use_cuda_graph=True,
             )
 
+        self.policy_rollout = False
+
     def step(self, action):
         """
         Step in the environment with an action.
@@ -138,10 +141,18 @@ class EnvOmniGibson(EB.EnvBase):
             done (bool): whether the task is done
             info (dict): extra information
         """
+        # og_step_start_time = time.time()
         obs, r, done, truncated, info = self.env.step(action)
+        # print('og step time', time.time()-og_step_start_time)
 
         # replace the observation with newly added IL obs function 
+        # get_obs_time = time.time()
         obs = self.get_obs_IL()
+        # print('get obs time', time.time()-get_obs_time)
+
+        subtask_success_signal = self.get_subtask_success_signal()
+        info['subtask_success_signal'] = subtask_success_signal
+
         # return obs, r, done, info
         # changed to output with truncated
         return obs, r, done, truncated, info
@@ -166,20 +177,43 @@ class EnvOmniGibson(EB.EnvBase):
 
     # TODO: make it more generalizable
     # randomize the pose of all the task relevant objects in xy-pos and z-rot
-    def _randomize_object_pose(self, objs):
-        pos_magnitude = 0.0  # 5cm
-        rot_magnitude = np.pi / 20  # 15 degrees
+    def _randomize_object_pose_D1(self, objs):
+        # default D1 randomization
+        # pos_magnitude = 0.1  # 10cm
+        # rot_magnitude = np.pi / 12  # 15 degrees
 
         # for debugging
         # pos_magnitude = 0.001
-        # rot_magnitude = np.pi / 10000  # 15 degrees
+        # rot_magnitude = np.pi / 10000 
+
+        pos_magnitude = 0.1  # 10cm
+        rot_magnitude = np.pi / 12  # 15 degrees
+
+        print('position random range (meter)', pos_magnitude*2, ' orientation random range (degree)', rot_magnitude*2/np.pi*180)
+        print('sample position in D1, breakpoint in _randomize_object_pose_D1')
+
+        # breakpoint()
 
         for obj in objs:
             if 'table' not in obj.name:
                 pos, orn = obj.get_position_orientation()
                 pos_diff_xy = np.random.uniform(-pos_magnitude, pos_magnitude, size=2)
                 pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
-                pos += pos_diff
+                # pos += pos_diff
+                if 'coffee' in obj.name:
+                    pos_diff[1] = 0.0 # make the y random val 0, coffee cup only randomize in the x range
+                    pos+= pos_diff
+                    offset = th.from_numpy(np.array([-0.1, 0.05, 0.0])).float()
+                    offset[1] = 0.0 
+                    pos += offset
+                # TODO: the paper cup randomization range is larger
+                if 'paper' in obj.name:
+                    pos_diff[1] = 0.0 # make the y random val 0, paper cup only randomize in the x range
+                    pos+= pos_diff
+                    offset = th.from_numpy(np.array([-0.1, -0.05, 0.0])).float()
+                    offset[1] = 0.0 
+                    pos += offset
+
                 # TODO： without mobile motion， the target pose need to be very carefully selected
                 # pos += th.from_numpy(np.array([-.15, 0.0, 0]))
                 orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
@@ -233,6 +267,9 @@ class EnvOmniGibson(EB.EnvBase):
 
         info = {}
 
+        print('check the env name', self.name)
+        # breakpoint()
+
         # D0 is the original distribution (no randomization at all - deterministic reset)
         if self.name.endswith("D0"):
             if self.name.startswith("test_tiago_cup"):
@@ -250,7 +287,7 @@ class EnvOmniGibson(EB.EnvBase):
         # D1 is the distribution with randomization in xy-pos and z-rot
         elif self.name.endswith("D1"):
             task_relevant_objs = self._get_task_relevant_objs()
-            self._randomize_object_pose(task_relevant_objs)
+            self._randomize_object_pose_D1(task_relevant_objs)
 
             # Step one time to update the scene and render a few times as well
             og.sim.step()
@@ -299,7 +336,8 @@ class EnvOmniGibson(EB.EnvBase):
         og.sim.load_state(th.from_numpy(state["states"]), serialized=True)
         og.sim.step()
 
-        return self.env.get_obs()[0]
+        return self.get_obs_IL()
+        # return self.env.get_obs()[0]
 
     # TODO: implement the case of "rgb_array" mode correctly, e.g. return the rendered image as a numpy array
     def render(self, mode="human", height=None, width=None, camera_name="agentview"):
@@ -347,6 +385,7 @@ class EnvOmniGibson(EB.EnvBase):
         camera_quat= th.tensor([0.2690, 0.2659, 0.6509, 0.6583])
         world_to_cam_tf = T.pose2mat((camera_position, camera_quat)).numpy()
 
+        # compute_pcd_time = time.time()
         pointcloud = compute_point_cloud_from_depth(
             depth_img, K, 
             cam_to_img_tf=None, 
@@ -357,6 +396,7 @@ class EnvOmniGibson(EB.EnvBase):
             num_points_to_sample=2048,
             clip_scene=True
             )
+        # print('compute_pcd_time', time.time()-compute_pcd_time)
         return pointcloud
 
     def get_obs_IL(self, di=None):
@@ -398,11 +438,44 @@ class EnvOmniGibson(EB.EnvBase):
         # render_img = og.sim.viewer_camera._get_obs()[0]['rgb']
         # obs_IL['render::rgb'] = np.array(render_img, dtype=np.uint8)
 
-        # add point cloud
-        pcd = self.get_pointcloud(other_obs)
-        obs_IL['combined::point_cloud'] = pcd
+        # add point cloud only when policy rollout
+        # policy_pcd_process_start_time = time.time()
+        if self.policy_rollout:
+            pcd = self.get_pointcloud(other_obs)
+            obs_IL['combined::point_cloud'] = pcd
+        # print('policy_pcd_process_time', time.time()-policy_pcd_process_start_time)
+        return obs_IL
 
-        return obs_IL        
+    def get_subtask_success_signal(self):
+        if 'test_tiago_cup' in self.name:
+
+            # the subtask signals are 
+            # whether the coffee cup is grasped
+            # whether the coffee cup is placed on the table
+            # whether the paper cup is grasped
+            
+            # grasping logic:
+            # TRUE = 1
+            # UNKNOWN = 0
+            # FALSE = -1
+
+            # print('breakpoint in env_omnigibson get_subtask_success_signal')
+            # breakpoint()
+
+            subtask_signals = dict()
+            # # TODO: need to change the logic 
+            # subtask_signals["grasp_right"] = abs(int(self.robot.is_grasping(arm="right", candidate_obj=self.env.task.object_scope["coffee_cup.n.01_1"])))
+            # subtask_signals["ungrasp_right"] = abs(1 - abs(int(self.robot.is_grasping(arm="right", candidate_obj=self.env.task.object_scope["coffee_cup.n.01_1"]))))
+
+            # subtask_signals["grasp_left"] = abs(int(self.robot.is_grasping(arm="left", candidate_obj=self.env.task.object_scope["dixie_cup.n.01_1"])))
+            # subtask_signals["ungrasp_left"] = abs(1-abs(int(self.robot.is_grasping(arm="left", candidate_obj=self.env.task.object_scope["dixie_cup.n.01_1"]))))
+            
+            return subtask_signals
+        
+        else: 
+            print('task name', self.name, 'subtask success signal not implemented')
+            breakpoint()
+            return None  
     
     def get_observation_list_IL(self):
         # return the list of observation keys for IL baselines

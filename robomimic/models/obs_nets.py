@@ -90,6 +90,11 @@ def obs_encoder_factory(
             enc_kwargs["core_kwargs"] = {'input_dim': 3, # x,y,z
                                         'output_dim': 64,
                                         'layer_dims': [32, 64, 128, 256]}
+            # enc_kwargs["core_kwargs"] = {'input_dim': 3, # x,y,z
+            #                             'output_dim': 1024,
+            #                             'layer_dims': [32, 128, 1024, 2048],
+            #                             # 'layer_dims': [32, 256, 2048, 4096]
+            #                             }
 
             # ObsUtils.register_encoder_core(SetXFPCDEncoder)
             # enc_kwargs["core_class"] = 'SetXFPCDEncoder'

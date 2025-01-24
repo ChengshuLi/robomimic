@@ -15,6 +15,8 @@ from copy import deepcopy
 from collections import OrderedDict
 import matplotlib.pyplot as plt  
 
+from omnigibson.object_states.contact_bodies import ContactBodies
+import time 
 
 import torch
 
@@ -312,7 +314,9 @@ def run_rollout(
         video_writer=None,
         video_skip=5,
         terminate_on_success=False,
-        demo_actions=None
+        demo_actions=None,
+        check_action_plot=False,
+        init_states=None,
     ):
     """
     Runs a rollout in an environment with the current network parameters.
@@ -344,6 +348,39 @@ def run_rollout(
     policy.start_episode()
 
     ob_dict = env.reset()
+
+    if init_states is not None:
+        ob_dict = env.reset_to(init_states)
+        print('reset to init states done')
+        print('coffee cup pose', ob_dict['object::coffee_cup'][0])
+        print('dexie cup pose', ob_dict['object::dixie_cup'][0])
+        # breakpoint()
+    else:
+        # print('breakpoint in run_rollout to check contacts')
+        # breakpoint()
+        def check_reset_requirement():
+            need_to_reset = False
+            robot = env.env.env.robots[0]
+            contact_prim_set = robot.states[ContactBodies].get_value()
+            for prim in contact_prim_set:
+                print(prim.name, 'is in contact')
+            contact_name_list = [prim.name for prim in contact_prim_set]
+            for name in contact_name_list:
+                if 'coffee_cup' in name:
+                    need_to_reset = True
+                if 'paper_cup' in name:
+                    need_to_reset = True
+            return need_to_reset
+        
+        reset_max_times = 2
+
+        reset_count = 1
+        while check_reset_requirement() and reset_count < reset_max_times:
+            print('need to reset')
+            reset_count += 1
+            ob_dict = env.reset()
+
+
     goal_dict = None
     if use_goals:
         # retrieve goal from the environment
@@ -359,8 +396,7 @@ def run_rollout(
     try:
         ac_list = []
         
-        plot_action_norm_stats = False
-        if plot_action_norm_stats:
+        if check_action_plot:
             fig, ax = plt.subplots()
             ax.plot(policy.action_normalization_stats['actions']['scale'].flatten(), label='action scale')
             ax.plot(policy.action_normalization_stats['actions']['offset'].flatten(), label='action offset')
@@ -368,12 +404,19 @@ def run_rollout(
             plt.savefig('action_norm_stats.png')
 
         for step_i in range(horizon):
+            # step_time = time.time()
+            # print("")
+            # print('step', step_i)
 
             # get action from policy
+            per_step_policy_rollout_time = time.time()
             ac_n, ac = policy(ob=ob_dict, goal=goal_dict)
+            # print('policy rollout time', time.time() - per_step_policy_rollout_time)
 
-            sanity_check_action_plot = True
-            if sanity_check_action_plot:
+            if check_action_plot:
+                
+                print('check whether should be in the check action plot stage')
+                breakpoint()
 
                 print("")
                 print('step', step_i)
@@ -431,19 +474,25 @@ def run_rollout(
             ac_list.append(ac)
 
             # play action
-            ob_dict, r, done, truncated, _ = env.step(ac)
+            env_rollout_time = time.time()
+            ob_dict, r, done, truncated, info = env.step(ac)
+            # print('env rollout time', time.time() - env_rollout_time)
 
+            # render_time = time.time()
             # render to screen
             if render:
                 env.render(mode="human")
+            # print('time for render', time.time() - render_time)
 
             # compute reward
             total_reward += r
-
+            # start_success_time = time.time()
             cur_success_metrics = env.is_success()
             for k in success:
                 success[k] = success[k] or cur_success_metrics[k]
+            # print('check success time', time.time() - start_success_time)
 
+            # video_writer_time = time.time()
             # visualization
             if video_writer is not None:
                 if video_count % video_skip == 0:
@@ -451,10 +500,12 @@ def run_rollout(
                     video_writer.append_data(video_img)
 
                 video_count += 1
-
+            # print('time for video writer', time.time() - video_writer_time)
             # break if done
             if done or (terminate_on_success and success["task"]):
                 break
+
+            # print('step time', time.time() - step_time)
 
     except env.rollout_exceptions as e:
         print("WARNING: got rollout exception {}".format(e))
@@ -470,6 +521,9 @@ def run_rollout(
     for k in success:
         if k != "task":
             results["{}_Success_Rate".format(k)] = float(success[k])
+    
+    # TODO: add subtask infomation to results
+    # for example whether grasping objects is successful
 
     return results
 
@@ -487,7 +541,9 @@ def rollout_with_stats(
         video_skip=5,
         terminate_on_success=False,
         verbose=False,
-        demo_actions=None
+        demo_actions=None,
+        check_action_plot=False,
+        init_states_list=None,
     ):
     """
     A helper function used in the train loop to conduct evaluation rollouts per environment
@@ -565,8 +621,10 @@ def rollout_with_stats(
         num_success = 0
         action_info = []
         for ep_i in iterator:
+            init_states = None
+            if init_states_list is not None:
+                init_states = init_states_list[ep_i]
             rollout_timestamp = time.time()
-            breakpoint()
             rollout_info = run_rollout(
                 policy=policy,
                 env=env,
@@ -576,15 +634,23 @@ def rollout_with_stats(
                 video_writer=env_video_writer,
                 video_skip=video_skip,
                 terminate_on_success=terminate_on_success,
-                demo_actions=demo_actions
-            )
+                demo_actions=demo_actions,
+                check_action_plot=check_action_plot,
+                init_states=init_states,
+            ) # 'Return', 'Horizon', 'Success_Rate', 'Exception_Rate', 'actions'
             action_info.append(rollout_info["actions"])
             rollout_info["time"] = time.time() - rollout_timestamp
             rollout_logs.append(rollout_info)
             num_success += rollout_info["Success_Rate"]
             if verbose:
+                print("")
                 print("Episode {}, horizon={}, num_success={}".format(ep_i + 1, horizon, num_success))
-                print(json.dumps(rollout_info, sort_keys=True, indent=4))
+                print("time", rollout_info["time"])
+                print("")
+                # print(json.dumps(rollout_info, sort_keys=True, indent=4))
+            
+            # print('breakpoint in rollout_with_stats')
+            # breakpoint()
 
         if video_dir is not None:
             # close this env's video writer (next env has it's own)
@@ -592,7 +658,8 @@ def rollout_with_stats(
 
         # average metric across all episodes
         rollout_logs = dict((k, [rollout_logs[i][k] for i in range(len(rollout_logs))]) for k in rollout_logs[0])
-        rollout_logs_mean = dict((k, np.mean(v)) for k, v in rollout_logs.items())
+        # dict_keys(['Return', 'Horizon', 'Success_Rate', 'Exception_Rate', 'actions', 'time'])
+        rollout_logs_mean = dict((k, np.mean(v)) for k, v in rollout_logs.items() if k != "actions")
         rollout_logs_mean["Time_Episode"] = np.sum(rollout_logs["time"]) / 60. # total time taken for rollouts in minutes
         all_rollout_logs[env_name] = rollout_logs_mean
 
