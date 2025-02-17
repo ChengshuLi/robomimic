@@ -403,6 +403,7 @@ def run_rollout(
             ax.legend()
             plt.savefig('action_norm_stats.png')
 
+        average_step_time = 0
         for step_i in range(horizon):
             # step_time = time.time()
             # print("")
@@ -476,7 +477,15 @@ def run_rollout(
             # play action
             env_rollout_time = time.time()
             ob_dict, r, done, truncated, info = env.step(ac)
-            # print('env rollout time', time.time() - env_rollout_time)
+            print('env rollout time', time.time() - env_rollout_time)
+            if average_step_time == 0:
+                average_step_time = time.time() - per_step_policy_rollout_time
+            else:
+                average_step_time = average_step_time *step_i / (step_i + 1) + (time.time() - per_step_policy_rollout_time) / (step_i + 1)
+            print('average step time', average_step_time)   
+            print('frequencey', 1 / (time.time() - per_step_policy_rollout_time))
+
+
 
             # render_time = time.time()
             # render to screen

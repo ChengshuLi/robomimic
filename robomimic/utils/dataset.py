@@ -347,8 +347,9 @@ class SequenceDataset(torch.utils.data.Dataset):
         for k in merged_stats:
             if "point_cloud" in k:
                 n_points = obs_traj["combined::point_cloud"].shape[1]
-                obs_normalization_stats[k]["mean"] = np.broadcast_to(obs_traj["combined::point_cloud"].mean(axis=(0, 1)).astype(np.float32).reshape((1, 1, 3)), (1, n_points, 3))
-                obs_normalization_stats[k]["std"] = np.broadcast_to((obs_traj["combined::point_cloud"].std(axis=(0, 1)).max(keepdims=True) + 1e-3).astype(np.float32).reshape((1, 1, 1)), (1, n_points, 3))
+                feature_dim = obs_traj["combined::point_cloud"].shape[2]
+                obs_normalization_stats[k]["mean"] = np.broadcast_to(obs_traj["combined::point_cloud"].mean(axis=(0, 1)).astype(np.float32).reshape((1, 1, feature_dim)), (1, n_points, feature_dim))
+                obs_normalization_stats[k]["std"] = np.broadcast_to((obs_traj["combined::point_cloud"].std(axis=(0, 1)).max(keepdims=True) + 1e-3).astype(np.float32).reshape((1, 1, 1)), (1, n_points, feature_dim))
             else:
                 # note we add a small tolerance of 1e-3 for std
                 obs_normalization_stats[k]["mean"] = merged_stats[k]["mean"].astype(np.float32)
