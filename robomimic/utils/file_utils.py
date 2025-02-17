@@ -93,8 +93,9 @@ def preprocess_omnigibson_dataset(dataset_path):
     env_kwargs = json.loads(f["data"].attrs["config"])
 
     # env_name is the same as the BDDL activity name + "_D0" (the original distribution)
+    activity_name = env_kwargs["task"].get("activity_name", "task")
     env_meta = {
-        "env_name": env_kwargs["task"]["activity_name"] + "_D0",
+        "env_name": activity_name + "_D0",
         "type": EnvUtils.EB.EnvType.OG_TYPE,
         "env_kwargs": env_kwargs,
     }

@@ -14,7 +14,7 @@ from omnigibson.envs import create_wrapper
 
 import omnigibson.utils.transform_utils as T
 from omnigibson.objects.primitive_object import PrimitiveObject
-from omnigibson.action_primitives.curobo import CuroboEmbodimentSelection, CuRoboMotionGenerator
+from omnigibson.action_primitives.starter_semantic_action_primitives import StarterSemanticActionPrimitives
 
 from mimicgen.train_scripts.train_prep_data import compute_point_cloud_from_depth
 
@@ -49,15 +49,17 @@ class EnvOmniGibson(EB.EnvBase):
         self.env = og.Environment(configs=kwargs)
         # TODO: uncomment the following lines for data generation.
         controller_config = {
-            'base': {'name': 'JointController', 'use_delta_commands': False, "command_output_limits": "default"},
-            'trunk': {'name': 'JointController', 'use_delta_commands': False, "command_output_limits": "default"},
-            'arm_left': {'name': 'JointController', 'use_delta_commands': False, "command_output_limits": "default"},
-            'arm_right': {'name': 'JointController', 'use_delta_commands': False, "command_output_limits": "default"},
-            'gripper_left': {'name': 'MultiFingerGripperController', 'mode': 'binary'},
-            'gripper_right': {'name': 'MultiFingerGripperController', 'mode': 'binary'},
-            'camera': {'name': 'JointController', 'use_delta_commands': False, "command_output_limits": "default"},
+            "base": {"name": "HolonomicBaseJointController", "motor_type": "position", "command_input_limits": None, "use_impedances": False},
+            "trunk": {"name": "JointController", "motor_type": "position", "use_delta_commands": False, "command_input_limits": None, "use_impedances": False},
+            "arm_left": {"name": "JointController", "motor_type": "position", "use_delta_commands": False, "command_input_limits": None, "use_impedances": False},
+            "arm_right": {"name": "JointController", "motor_type": "position", "use_delta_commands": False, "command_input_limits": None, "use_impedances": False},
+            "gripper_left": {"name": "MultiFingerGripperController", "mode": "binary"},
+            "gripper_right": {"name": "MultiFingerGripperController", "mode": "binary"},
+            "camera": {"name": "JointController", "motor_type": "position", "use_delta_commands": False, "command_input_limits": None, "use_impedances": False},
         }
+
         self.env.robots[0].reload_controllers(controller_config=controller_config)
+        # self.env.robots[0]._grasping_mode = "sticky"
         self.env.scene.update_initial_state()
 
         # Debug visualization
@@ -118,13 +120,10 @@ class EnvOmniGibson(EB.EnvBase):
                                       self.eef_current_marker_right, self.eef_goal_marker_right], [self.env.scene] * 4)
             og.sim.step()
 
+        self.primitive = StarterSemanticActionPrimitives(self.env, self.env.robots[0], enable_head_tracking=False)
         # Create CuRobo instance
         if self._init_kwargs['init_curobo']:
-            self.cmg = CuRoboMotionGenerator(
-                robot=self.env.robots[0],
-                batch_size=1,
-                use_cuda_graph=True,
-            )
+            self.cmg = self.primitive._motion_generator
 
         self.policy_rollout = False
 
@@ -170,6 +169,8 @@ class EnvOmniGibson(EB.EnvBase):
             obj_names = ["notebook.n.01_1", "breakfast_table.n.01_1"]
         elif self.name.startswith("test_tiago_cup"):
             obj_names = ["coffee_cup.n.01_1", "dixie_cup.n.01_1", "breakfast_table.n.01_1"]
+        elif self.name.startswith("test_r1_cup"):
+            return [self.env.scene.object_registry("name", name) for name in ["coffee_cup", "teacup", "breakfast_table"]]
         else:
             raise ValueError(f"Unknown environment name: {self.name}")
 
@@ -195,7 +196,7 @@ class EnvOmniGibson(EB.EnvBase):
         # breakpoint()
 
         for obj in objs:
-            if 'table' not in obj.name:
+            if "table" not in obj.name:
                 pos, orn = obj.get_position_orientation()
                 pos_diff_xy = np.random.uniform(-pos_magnitude, pos_magnitude, size=2)
                 pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
@@ -229,7 +230,7 @@ class EnvOmniGibson(EB.EnvBase):
         # rot_magnitude = np.pi / 10000  # 15 degrees
 
         for obj in objs:
-            if 'table' not in obj.name:
+            if "table" not in obj.name:
                 pos, orn = obj.get_position_orientation()
                 pos_diff_xy = np.random.uniform(-pos_magnitude, pos_magnitude, size=2)
                 pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
