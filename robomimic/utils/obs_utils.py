@@ -98,8 +98,7 @@ def obs_encoder_kwargs_from_config(obs_encoder_config):
             # Make sure the requested encoder for each obs_modality exists
             cfg_cls = encoder_kwargs[f"{cls_name}_class"]
             if cfg_cls is not None:
-                assert cfg_cls in cores, f"No {cls_name} class with name {cfg_cls} found, must register this class before" \
-                    f"creating model!"
+                assert cfg_cls in cores, f"No {cls_name} class with name {cfg_cls} found, must register this class before creating model!"
                 # encoder_kwargs[f"{cls_name}_class"] = cores[cfg_cls]
 
         # Process core and randomizer kwargs
@@ -250,6 +249,9 @@ def initialize_obs_utils_with_config(config):
         obs_modality_specs = [config.observation.modalities]
         obs_encoder_config = config.observation.encoder
     initialize_obs_utils_with_obs_specs(obs_modality_specs=obs_modality_specs)
+    from robomimic.models.base_nets import PointNet, MLP
+    register_encoder_core(PointNet)
+    register_encoder_core(MLP)
     initialize_default_obs_encoder(obs_encoder_config=obs_encoder_config)
 
 
@@ -377,6 +379,8 @@ def process_frame(frame, channel_dim, scale):
         processed_frame (np.array or torch.Tensor): processed frame
     """
     # Channel size should either be 3 (RGB) or 1 (depth)
+    if frame.shape[-1] != channel_dim:
+        breakpoint()
     assert (frame.shape[-1] == channel_dim)
     frame = TU.to_float(frame)
     if scale is not None:
@@ -1019,6 +1023,20 @@ class LowDimModality(Modality):
     Modality for low dimensional observations
     """
     name = "low_dim"
+
+    @classmethod
+    def _default_obs_processor(cls, obs):
+        return obs
+
+    @classmethod
+    def _default_obs_unprocessor(cls, obs):
+        return obs
+
+class PointCloudModality(Modality):
+    """
+        Modality for depth observations
+        """
+    name = "point_cloud"
 
     @classmethod
     def _default_obs_processor(cls, obs):

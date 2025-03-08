@@ -537,6 +537,7 @@ class RolloutPolicy(object):
             obs_normalization_stats = TensorUtils.to_float(TensorUtils.to_device(TensorUtils.to_tensor(self.obs_normalization_stats), self.policy.device))
             # limit normalization to obs keys being used, in case environment includes extra keys
             ob = { k : ob[k] for k in self.policy.global_config.all_obs_keys }
+            # breakpoint()
             ob = ObsUtils.normalize_dict(ob, normalization_stats=obs_normalization_stats)
         return ob
 

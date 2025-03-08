@@ -115,7 +115,7 @@ class BC(PolicyAlgo):
         return TensorUtils.to_float(TensorUtils.to_device(input_batch, self.device))
 
 
-    def train_on_batch(self, batch, epoch, validate=False):
+    def train_on_batch(self, batch, epoch, validate=False, action_normalization_stats=None):
         """
         Training on a single batch of data.
 

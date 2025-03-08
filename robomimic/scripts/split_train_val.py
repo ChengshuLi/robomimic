@@ -71,9 +71,11 @@ def split_train_val_from_hdf5(hdf5_path, val_ratio=0.1, filter_key=None):
 
     print("Total number of train samples: {}".format(np.sum(train_lengths)))
     print("Average number of train samples {}".format(np.mean(train_lengths)))
+    print('train demo keys', name_1, train_keys)
 
     print("Total number of valid samples: {}".format(np.sum(valid_lengths)))
     print("Average number of valid samples {}".format(np.mean(valid_lengths)))
+    print('valid demo keys', name_2, valid_keys)
 
 
 if __name__ == "__main__":

@@ -309,7 +309,7 @@ class PointNet(Module):
         input_dim,
         output_dim,
         layer_dims=(64, 128, 1024),
-        activation=nn.ReLU,
+        activation=nn.GELU,
         normalization=False,
         global_feature=True,
         output_activation=None

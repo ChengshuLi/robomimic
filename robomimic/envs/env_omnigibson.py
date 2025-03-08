@@ -8,6 +8,7 @@ import numpy as np
 from copy import deepcopy
 
 import omnigibson as og
+import omnigibson.lazy as lazy
 import robomimic.utils.obs_utils as ObsUtils
 import robomimic.envs.env_base as EB
 from omnigibson.envs import create_wrapper
@@ -16,7 +17,7 @@ import omnigibson.utils.transform_utils as T
 from omnigibson.objects.primitive_object import PrimitiveObject
 from omnigibson.action_primitives.starter_semantic_action_primitives import StarterSemanticActionPrimitives
 
-from mimicgen.train_scripts.train_prep_data import compute_point_cloud_from_depth
+from mimicgen.train_scripts.train_prep_data import compute_point_cloud_from_rgbd, pcd_vis, color_pcd_vis
 
 import torch as th
 import numpy as np
@@ -49,7 +50,7 @@ class EnvOmniGibson(EB.EnvBase):
         self.env = og.Environment(configs=kwargs)
         # TODO: uncomment the following lines for data generation.
         controller_config = {
-            "base": {"name": "HolonomicBaseJointController", "motor_type": "position", "command_input_limits": None, "use_impedances": False},
+            "base": {"name": "HolonomicBaseJointController", "motor_type": "position", "command_input_limits": None, "use_impedances": False, "control_freq": 10},
             "trunk": {"name": "JointController", "motor_type": "position", "use_delta_commands": False, "command_input_limits": None, "use_impedances": False},
             "arm_left": {"name": "JointController", "motor_type": "position", "use_delta_commands": False, "command_input_limits": None, "use_impedances": False},
             "arm_right": {"name": "JointController", "motor_type": "position", "use_delta_commands": False, "command_input_limits": None, "use_impedances": False},
@@ -120,12 +121,13 @@ class EnvOmniGibson(EB.EnvBase):
                                       self.eef_current_marker_right, self.eef_goal_marker_right], [self.env.scene] * 4)
             og.sim.step()
 
-        self.primitive = StarterSemanticActionPrimitives(self.env, self.env.robots[0], enable_head_tracking=False)
+        self.primitive = StarterSemanticActionPrimitives(self.env, self.env.robots[0], enable_head_tracking=False, curobo_batch_size=1)
         # Create CuRobo instance
         if self._init_kwargs['init_curobo']:
             self.cmg = self.primitive._motion_generator
 
         self.policy_rollout = False
+        self.with_color = False
 
     def step(self, action):
         """
@@ -193,33 +195,46 @@ class EnvOmniGibson(EB.EnvBase):
         print('position random range (meter)', pos_magnitude*2, ' orientation random range (degree)', rot_magnitude*2/np.pi*180)
         print('sample position in D1, breakpoint in _randomize_object_pose_D1')
 
-        # breakpoint()
-
-        for obj in objs:
-            if "table" not in obj.name:
-                pos, orn = obj.get_position_orientation()
-                pos_diff_xy = np.random.uniform(-pos_magnitude, pos_magnitude, size=2)
-                pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
-                # pos += pos_diff
-                if 'coffee' in obj.name:
-                    pos_diff[1] = 0.0 # make the y random val 0, coffee cup only randomize in the x range
+        if self.name.startswith("test_r1_cup"):
+            for obj in objs:
+                if "table" not in obj.name:
+                    pos, orn = obj.get_position_orientation()
+                    pos_diff_xy = np.random.uniform(-pos_magnitude, pos_magnitude, size=2)
+                    pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
                     pos+= pos_diff
-                    offset = th.from_numpy(np.array([-0.1, 0.05, 0.0])).float()
-                    offset[1] = 0.0 
-                    pos += offset
-                # TODO: the paper cup randomization range is larger
-                if 'paper' in obj.name:
-                    pos_diff[1] = 0.0 # make the y random val 0, paper cup only randomize in the x range
-                    pos+= pos_diff
-                    offset = th.from_numpy(np.array([-0.1, -0.05, 0.0])).float()
-                    offset[1] = 0.0 
-                    pos += offset
 
-                # TODO： without mobile motion， the target pose need to be very carefully selected
-                # pos += th.from_numpy(np.array([-.15, 0.0, 0]))
-                orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
-                orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
-                obj.set_position_orientation(pos, orn)
+                    orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
+                    orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
+                    obj.set_position_orientation(pos, orn)
+                    print('finish randomize obj pose for r1 robot', obj.name)
+
+        elif self.name.startswith("test_tiago_cup"):
+
+            for obj in objs:
+                if "table" not in obj.name:
+                    pos, orn = obj.get_position_orientation()
+                    pos_diff_xy = np.random.uniform(-pos_magnitude, pos_magnitude, size=2)
+                    pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
+                    # pos += pos_diff
+                    if 'coffee' in obj.name:
+                        pos_diff[1] = 0.0 # make the y random val 0, coffee cup only randomize in the x range
+                        pos+= pos_diff
+                        offset = th.from_numpy(np.array([-0.1, 0.05, 0.0])).float()
+                        offset[1] = 0.0 
+                        pos += offset
+                    # TODO: the paper cup randomization range is larger
+                    if 'paper' in obj.name:
+                        pos_diff[1] = 0.0 # make the y random val 0, paper cup only randomize in the x range
+                        pos+= pos_diff
+                        offset = th.from_numpy(np.array([-0.1, -0.05, 0.0])).float()
+                        offset[1] = 0.0 
+                        pos += offset
+
+                    # TODO： without mobile motion， the target pose need to be very carefully selected
+                    # pos += th.from_numpy(np.array([-.15, 0.0, 0]))
+                    orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
+                    orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
+                    obj.set_position_orientation(pos, orn)
 
     def _randomize_object_pose_D2(self, objs):
         pos_magnitude = 0.10  # 5cm
@@ -370,35 +385,262 @@ class EnvOmniGibson(EB.EnvBase):
             return img
         else:
             return np.zeros((height if height else 128, width if width else 128, 3), dtype=np.uint8)
+
+    def customize_physical_properties(self):
+        """
+        Setup the mass, friction specifically for each task
+        """
+        if self.name.startswith("test_r1_cup"):
+            # Increase gripper friction
+            state = og.sim.dump_state()
+            og.sim.stop()
+            target_friction = 2.0
+            gripper_mat = lazy.omni.isaac.core.materials.PhysicsMaterial(
+                prim_path=f"{self.env.robots[0].prim_path}/gripper_mat",
+                name="gripper_material",
+                static_friction=target_friction,
+                dynamic_friction=target_friction,
+                restitution=None,
+            )
+            for links in self.env.robots[0].finger_links.values():
+                for link in links:
+                    for msh in link.collision_meshes.values():
+                        msh.apply_physics_material(gripper_mat)
+            og.sim.play()
+            og.sim.load_state(state)
+
+            print('finish setting up the gripper friction in test_r1')
+        
+        elif self.name.startswith("test_tiago_cup"):
+
+            state = og.sim.dump_state()
+
+            # change the density and friction of objects
+            # TODO: uncomment the necessary parts
+            # notebook = env.env.scene.object_registry("name", "notebook")
+            # notebook.links['base_link'].density = 10
+
+            # coffee_cup.links['base_link'].friction = 0.01 # friction is not in the link object
+
+            # giftbox = env.scene.object_registry("name", "gift_box")
+            # giftbox.links['base_link'].density = 100
+
+            # coffee_cup = env.env.scene.object_registry("name", "coffee_cup")
+            # coffee_cup.links['base_link'].density = 30
+
+            # paper_cup = env.env.scene.object_registry("name", "paper_cup")
+            # paper_cup.links['base_link'].density = 100
+
+            og.sim.play()
+            og.sim.load_state(state)
+            print('finish setting up the density of objects in test_tiago_cup')
+            breakpoint()
+
+    def sensor_setup(self):
+        """
+        Setup the sensor position, orientation of the environment
+        """
+        if self.name.startswith("test_r1_cup"):
+
+            # customize viewer for this task specifically
+            # TODO: if use third person view, have to provide customized camera sensot for each
+            sensor = og.sim.viewer_camera
+            sensor.set_position_orientation(
+                position=th.tensor([ 2.7668, -0.0084,  1.9879]),
+                orientation=th.tensor([0.3260, 0.3297, 0.6300, 0.6229]),
+            ) # viewer position
+            sensor.add_modality("depth_linear")
+            sensor.add_modality("rgb")
+            sensor.image_height = 196
+            sensor.image_width = 320
+
+            # print('sensor intrinsic matrix', sensor.intrinsic_matrix)
+            # print('sensor pose', sensor.get_position_orientation())
+            self.K = np.array([
+                [259.6039,   0.0000, 160.0000],
+                [  0.0000, 278.5423,  98.0000],
+                [  0.0000,   0.0000,   1.000]
+                ]) 
+            self.camera_position = th.tensor([ 2.7668, -0.0084,  1.9879])
+            self.camera_quat = th.tensor([0.3260, 0.3297, 0.6300, 0.6229])
+            self.world_to_cam_tf = T.pose2mat((self.camera_position, self.camera_quat)).numpy()
+            self.sensor_max_depth = 4.0
+            self.number_ponits_to_sample = 4096
+            self.pcd_offset = np.array([ -4.116, 0.002,  -3.069])
+            self.pcd_norm_range = np.array([0.9, 0.9, 0.9])
+            self.clip_bbox_size = np.array([3, 1.5, 2])
+            
+            # change the viewport output to the viewer camera
+            viewer_prim_path = og.sim.viewer_camera.prim_path
+            og.sim.viewer_camera.active_camera_path = viewer_prim_path #'/World/viewer_camera'
+
+            # change external sensor 0 pose and resolution
+            ext_sensor = self.env._external_sensors['external_sensor0']
+            ext_sensor.set_position_orientation(
+                position=th.tensor([ 1.7330, -0.0486,  1.5626]),
+                orientation=th.tensor([0.3689, 0.3718, 0.6047, 0.5999]),
+            )
+            ext_sensor.add_modality("depth_linear")
+
+            sensor_pose = sensor.get_position_orientation()
+            # sensor_pose = th.cat([sensor_pose[0], sensor_pose[1]])
+            sensor_info = {
+                "pos": sensor_pose[0],
+                "quat": sensor_pose[1],
+                "K": sensor.intrinsic_matrix,
+                "world_to_cam_tf": self.world_to_cam_tf,
+                "image_height": sensor.image_height,
+                "image_width": sensor.image_width,
+                'sensor_max_depth': self.sensor_max_depth,
+                'number_points_to_sample': self.number_ponits_to_sample,
+                'pcd_offset': self.pcd_offset,
+                'pcd_norm_range': self.pcd_norm_range,
+                'clip_bbox_size': self.clip_bbox_size
+            }
+
     
-    def get_pointcloud(self, obs):
+        elif self.name.startswith("test_tiago_cup"):
+
+            self.K = np.array([
+                [259.6039,   0.0000, 160.0000],
+                [  0.0000, 280.2977,  90.0000],
+                [  0.0000,   0.0000,   1.0000]
+                ])
+            self.camera_position = th.tensor([ 1.0304, -0.0309,  1.0272])
+            self.camera_quat= th.tensor([0.2690, 0.2659, 0.6509, 0.6583])
+            self.world_to_cam_tf = T.pose2mat((self.camera_position, self.camera_quat)).numpy()
+            self.sensor_max_depth = 2.0
+            self.number_ponits_to_sample = 2048
+
+        return sensor_info
+
+    def process_point_cloud(self, obs):
         """
         Get point cloud from the environment
         """
-        depth_img = obs['external::external_sensor0::depth_linear']
-        K = np.array([
-        [259.6039,   0.0000, 160.0000],
-        [  0.0000, 280.2977,  90.0000],
-        [  0.0000,   0.0000,   1.0000]
-        ])
-        # get world to camera transform
-        camera_position = th.tensor([ 1.0304, -0.0309,  1.0272])
-        camera_quat= th.tensor([0.2690, 0.2659, 0.6509, 0.6583])
-        world_to_cam_tf = T.pose2mat((camera_position, camera_quat)).numpy()
-
-        # compute_pcd_time = time.time()
-        pointcloud = compute_point_cloud_from_depth(
-            depth_img, K, 
-            cam_to_img_tf=None, 
-            world_to_cam_tf=world_to_cam_tf, 
-            pcd_step_vis=False, 
-            max_depth=2,
-            sample_type='fps',
-            num_points_to_sample=2048,
-            clip_scene=True
-            )
-        # print('compute_pcd_time', time.time()-compute_pcd_time)
+        if self.name.startswith("test_tiago_cup"):
+            depth_img = obs['external::external_sensor0::depth_linear']
+            raise ValueError(f"need customize to the new compute_point_cloud_from_rgbd")
+            
+        
+        elif self.name.startswith("test_r1_cup"):
+            # compute_pcd_time = time.time()
+            for key in obs.keys():
+                if 'depth_linear' in key:
+                    # print('depth key', key)
+                    depth = obs[key]
+                elif 'rgb' in key:
+                    # print('rgb key', key)
+                    rgb = obs[key]
+            rgbd = np.concatenate([rgb, depth[:,:,None]], axis=-1)
+            pointcloud = compute_point_cloud_from_rgbd(
+                rgbd=rgbd, 
+                K=self.K, 
+                pcd_offset=self.pcd_offset,
+                pcd_norm_range=self.pcd_norm_range,
+                clip_bbox_size=self.clip_bbox_size,
+                cam_to_img_tf=None, 
+                world_to_cam_tf=self.world_to_cam_tf, 
+                pcd_step_vis=False, 
+                max_depth=self.sensor_max_depth,
+                sample_type='fps',
+                num_points_to_sample=self.number_ponits_to_sample,
+                clip_scene=True,
+                with_color=self.with_color
+                )
+        
         return pointcloud
+
+    def process_prop(self, obs):
+        # base_qpos = obs['base_qpos'] #  3
+        base_qvel = obs['base_qvel'] # 3
+        trunk_qpos = obs['trunk_qpos'] # 4
+        arm_left_qpos = obs['arm_left_qpos'] #  6
+        arm_right_qpos = obs['arm_right_qpos'] #  6
+        left_gripper_width = obs['gripper_left_qpos'].sum()[None] # 1
+        right_gripper_width = obs['gripper_right_qpos'].sum()[None] # 1
+        prop_state = np.concatenate((base_qvel, trunk_qpos, arm_left_qpos, arm_right_qpos, left_gripper_width, right_gripper_width)) # 21
+        if 'r1' in self.name: assert prop_state.shape[0] == 21
+        return prop_state
+
+    def process_eef(self, obs):
+        eef_left_pos = obs['eef_left_pos'] # 3
+        eef_right_pos = obs['eef_right_pos'] # 3
+        eef_left_quat = obs['eef_left_quat'] # 4
+        eef_right_quat = obs['eef_right_quat'] # 4
+        eef_state = np.concatenate((eef_left_pos, eef_right_pos, eef_left_quat, eef_right_quat)) # 14
+        if 'r1' in self.name: assert eef_state.shape[0] == 14 # for r1 robot
+        return eef_state
+    
+    def process_prop_eef(self, obs):
+        # base_qpos = obs['base_qpos'] #  3
+        base_qvel = obs['base_qvel'] # 3
+        trunk_qpos = obs['trunk_qpos'] # 4
+        arm_left_qpos = obs['arm_left_qpos'] #  6
+        eef_left_pos = obs['eef_left_pos'] # 3
+        eef_left_quat = obs['eef_left_quat'] # 4
+        left_gripper_width = obs['gripper_left_qpos'].sum()[None] # 1
+        arm_right_qpos = obs['arm_right_qpos'] #  6
+        eef_right_pos = obs['eef_right_pos'] # 3
+        eef_right_quat = obs['eef_right_quat'] # 4
+        right_gripper_width = obs['gripper_right_qpos'].sum()[None] # 1
+
+        prop_eef_state = np.concatenate((base_qvel, trunk_qpos, 
+                                     arm_left_qpos, eef_left_pos, eef_left_quat, left_gripper_width, 
+                                     arm_right_qpos, eef_right_pos, eef_right_quat, right_gripper_width)) # 35
+        if 'r1' in self.name: assert prop_eef_state.shape[0] == 35 # for r1 robot
+        return prop_eef_state
+
+    def process_prop_eef_basepose(self, obs):
+        base_qpos = obs['base_qpos'] #  3
+        base_qvel = obs['base_qvel'] # 3
+        trunk_qpos = obs['trunk_qpos'] # 4
+        arm_left_qpos = obs['arm_left_qpos'] #  6
+        eef_left_pos = obs['eef_left_pos'] # 3
+        eef_left_quat = obs['eef_left_quat'] # 4
+        left_gripper_width = obs['gripper_left_qpos'].sum()[None] # 1
+        arm_right_qpos = obs['arm_right_qpos'] #  6
+        eef_right_pos = obs['eef_right_pos'] # 3
+        eef_right_quat = obs['eef_right_quat'] # 4
+        right_gripper_width = obs['gripper_right_qpos'].sum()[None] # 1
+
+        prop_eef_basepose_state = np.concatenate((base_qpos, base_qvel, trunk_qpos, 
+                                     arm_left_qpos, eef_left_pos, eef_left_quat, left_gripper_width, 
+                                     arm_right_qpos, eef_right_pos, eef_right_quat, right_gripper_width)) # 38
+        if 'r1' in self.name: assert prop_eef_basepose_state.shape[0] == 38 # for r1 robot
+        return prop_eef_basepose_state
+
+    def process_obj(self):
+        # process object states, tranform them into robot fixed frames
+
+        base_link_pose = self.env.robots[0].get_position_orientation()
+        if self.name.startswith("test_r1_cup"):
+            # TODO: only work for test r1 cup, which is a dummy task
+            obj_states = {}
+            obj_list = []
+            obj_list.append(self.env.scene.object_registry("name", "coffee_cup"))
+            obj_list.append(self.env.scene.object_registry("name", "teacup"))
+            # obj_list = [self.env.scene.object_registry("name", name) for name in ["coffee_cup", "teacup"]]
+            for obj in obj_list:
+                obj_name = "object::"+obj.name
+                pos, ori = obj.get_position_orientation()
+                local_pos, local_ori = T.relative_pose_transform(pos, ori, *base_link_pose)
+                obj_states[obj_name] = np.concatenate([local_pos, local_ori])
+        
+        else:
+            # get object states for tasks that are not dummy tasks
+            obj_states = {}
+            obj_bddl_names = [obj.bddl_inst for obj in self.env._task.object_scope.values()] # get object names
+            for obj_name in obj_bddl_names:
+                # TODO: here not checking whether the object exist in the scene, may need to handle this silimar to omnigibson/tasks/behavior_task.py
+                pos, ori = self.env.task.object_scope[obj_name].get_position_orientation()
+                local_pos, local_ori = T.relative_pose_transform(pos, ori, *base_link_pose)
+                if 'agent' not in obj_name and 'robot' not in obj_name:
+                    # remove the .n.01_1 suffix and only keep the object name
+                    obj_name = "object::"+obj_name.split('.')[0]
+                obj_states[obj_name] = np.concatenate([local_pos, local_ori])
+        
+        return obj_states
 
     def get_obs_IL(self, di=None):
         """
@@ -409,45 +651,58 @@ class EnvOmniGibson(EB.EnvBase):
         """
 
         # customize observation for IL baselines
-        robot_prop_states = self.env.robots[0]._get_proprioception_dict()
-
-        base_link_pose = self.env.robots[0].get_position_orientation()
-
-        # get object states
-        obj_states = {}
-        obj_bddl_names = [obj.bddl_inst for obj in self.env._task.object_scope.values()] # get object names
-        for obj_name in obj_bddl_names:
-            # TODO: here not checking whether the object exist in the scene, may need to handle this silimar to omnigibson/tasks/behavior_task.py
-            pos, ori = self.env.task.object_scope[obj_name].get_position_orientation()
-            local_pos, local_ori = T.relative_pose_transform(pos, ori, *base_link_pose)
-            if 'agent' not in obj_name and 'robot' not in obj_name:
-                # remove the .n.01_1 suffix and only keep the object name
-                obj_name = "object::"+obj_name.split('.')[0]
-            obj_states[obj_name] = np.concatenate([local_pos, local_ori])
-
-        # get default observations
-        other_obs = self.get_observation(di)
-
-        # combine all observations
         obs_IL = {}
-        # merge with other observation types
-        obs_IL.update(robot_prop_states)
+
+        obj_states = self.process_obj()
         obs_IL.update(obj_states)
 
-        # TODO: need to add images back after setting up the camera
+        other_obs = self.get_observation(di) # get default observations
         obs_IL.update(other_obs)
-        # render_img = og.sim.viewer_camera._get_obs()[0]['rgb']
-        # obs_IL['render::rgb'] = np.array(render_img, dtype=np.uint8)
 
+        # TODO: after pulling the latest, the sensor camera info is not in other_obs
+        if self.name.startswith("test_r1_cup"):
+            # TODO: need to add back the camera info manually
+            sensor_obs = og.sim.viewer_camera.get_obs()[0]
+            sensor_obs = {'external::viewer::'+k:v for k,v in sensor_obs.items()}
+            # external_sensor_obs = self.env._external_sensors['external_sensor0'].get_obs()[0]
+            # external_sensor_obs = {'external::external_sensor0::'+k:v for k,v in external_sensor_obs.items()}
+            # for k, v in sensor_obs.items():
+            #     print('obs shape', k, v.shape)
+            # obs_IL.update(sensor_obs)
+        else:
+            raise ValueError(f"need to customize camera sensor information for task: {self.name}")
+        obs_IL.update(sensor_obs)
         # add point cloud only when policy rollout
         # policy_pcd_process_start_time = time.time()
         if self.policy_rollout:
-            pcd = self.get_pointcloud(other_obs)
-            obs_IL['combined::point_cloud'] = pcd
+            pcd = self.process_point_cloud(sensor_obs)
+            if self.with_color:
+                obs_IL['combined::color_point_cloud'] = pcd
+            else:
+                obs_IL['combined::point_cloud'] = pcd
         # print('policy_pcd_process_time', time.time()-policy_pcd_process_start_time)
+        
+
+        robot_prop_states = self.env.robots[0]._get_proprioception_dict()
+        obs_IL.update(robot_prop_states)
+
+        prop_state = {'prop_state': self.process_prop(robot_prop_states)}
+        obs_IL.update(prop_state)
+
+        prop_eef_state = {'prop_eef_state': self.process_prop_eef(robot_prop_states)}
+        obs_IL.update(prop_eef_state)
+
+        prop_eef_basepose = {'prop_eef_basepose': self.process_prop_eef_basepose(robot_prop_states)}
+        obs_IL.update(prop_eef_basepose)
+
+        # eef_state = {'eef_state': self.process_eef(robot_prop_states)}
+        # obs_IL.update(eef_state)
+
         return obs_IL
 
     def get_subtask_success_signal(self):
+        # TODO: need to implement the subtask success signal
+        subtask_signals = dict()
         if 'test_tiago_cup' in self.name:
 
             # the subtask signals are 
@@ -463,7 +718,6 @@ class EnvOmniGibson(EB.EnvBase):
             # print('breakpoint in env_omnigibson get_subtask_success_signal')
             # breakpoint()
 
-            subtask_signals = dict()
             # # TODO: need to change the logic 
             # subtask_signals["grasp_right"] = abs(int(self.robot.is_grasping(arm="right", candidate_obj=self.env.task.object_scope["coffee_cup.n.01_1"])))
             # subtask_signals["ungrasp_right"] = abs(1 - abs(int(self.robot.is_grasping(arm="right", candidate_obj=self.env.task.object_scope["coffee_cup.n.01_1"]))))
@@ -471,12 +725,14 @@ class EnvOmniGibson(EB.EnvBase):
             # subtask_signals["grasp_left"] = abs(int(self.robot.is_grasping(arm="left", candidate_obj=self.env.task.object_scope["dixie_cup.n.01_1"])))
             # subtask_signals["ungrasp_left"] = abs(1-abs(int(self.robot.is_grasping(arm="left", candidate_obj=self.env.task.object_scope["dixie_cup.n.01_1"]))))
             
-            return subtask_signals
+            # print('task name', self.name, 'subtask success signal not implemented')
+            pass
         
         else: 
-            print('task name', self.name, 'subtask success signal not implemented')
-            breakpoint()
-            return None  
+            # print('task name', self.name, 'subtask success signal not implemented')
+            pass
+
+        return subtask_signals
     
     def get_observation_list_IL(self):
         # return the list of observation keys for IL baselines
@@ -504,6 +760,17 @@ class EnvOmniGibson(EB.EnvBase):
         { str: bool } with at least a "task" key for the overall task success,
         and additional optional keys corresponding to other task criteria.
         """
+        if self.name.startswith("test_r1_cup"):
+            ontop = False
+            coffee_cup_pos, _ = self.env.scene.object_registry("name", "coffee_cup").get_position_orientation()
+            teacup_pos, _ = self.env.scene.object_registry("name", "teacup").get_position_orientation()
+            # check whether the coffee cup is on top of the teacup
+            xy_diff = np.linalg.norm(coffee_cup_pos[:2] - teacup_pos[:2])
+            z_diff = np.abs(coffee_cup_pos[2] - teacup_pos[2])
+            if xy_diff < 0.03 and z_diff < 0.03: ontop=True        
+            if ontop:
+                print('success detected', 'xy_diff', xy_diff, 'z_diff', z_diff)
+            return {"task": ontop}
         return {"task": len(self.env.task._termination_conditions["predicate"].goal_status["unsatisfied"]) == 0}
 
     @property
@@ -613,5 +880,7 @@ class EnvOmniGibson(EB.EnvBase):
         """
         if 'tiago' in self.name:
             return 22
+        elif 'r1' in self.name:
+            return 21
         else:
             raise NotImplementedError

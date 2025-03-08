@@ -346,10 +346,11 @@ class SequenceDataset(torch.utils.data.Dataset):
         obs_normalization_stats = { k : {} for k in merged_stats }
         for k in merged_stats:
             if "point_cloud" in k:
-                n_points = obs_traj["combined::point_cloud"].shape[1]
-                feature_dim = obs_traj["combined::point_cloud"].shape[2]
-                obs_normalization_stats[k]["mean"] = np.broadcast_to(obs_traj["combined::point_cloud"].mean(axis=(0, 1)).astype(np.float32).reshape((1, 1, feature_dim)), (1, n_points, feature_dim))
-                obs_normalization_stats[k]["std"] = np.broadcast_to((obs_traj["combined::point_cloud"].std(axis=(0, 1)).max(keepdims=True) + 1e-3).astype(np.float32).reshape((1, 1, 1)), (1, n_points, feature_dim))
+                n_points = obs_traj[k].shape[1]
+                feature_dim = obs_traj[k].shape[2]
+                obs_normalization_stats[k]["mean"] = np.broadcast_to(obs_traj[k].mean(axis=(0, 1)).astype(np.float32).reshape((1, 1, feature_dim)), (1, n_points, feature_dim))
+                # obs_normalization_stats[k]["std"] = np.broadcast_to((obs_traj[k].std(axis=(0, 1)).max(keepdims=True) + 1e-3).astype(np.float32).reshape((1, 1, 1)), (1, n_points, feature_dim)) # why we originally keep the max?
+                obs_normalization_stats[k]["std"] = np.broadcast_to((obs_traj[k].std(axis=(0, 1)) + 1e-3).astype(np.float32).reshape((1, 1, feature_dim)), (1, n_points, feature_dim))
             else:
                 # note we add a small tolerance of 1e-3 for std
                 obs_normalization_stats[k]["mean"] = merged_stats[k]["mean"].astype(np.float32)
@@ -1109,6 +1110,8 @@ def action_stats_to_normalization_stats(action_stats, action_config):
             # instead of -1 and 1 use numbers just below threshold to prevent numerical instability issues
             output_min = -0.9999 # -0.999999
             output_max = 0.9999 # 0.999999
+            # output_min = -0.999999
+            # output_max = 0.999999
             
             # ignore input dimentions that is too small to prevent division by zero
             input_range = input_max - input_min

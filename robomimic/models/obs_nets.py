@@ -59,6 +59,7 @@ def obs_encoder_factory(
             obs_modality2: dict
                 ...
     """
+
     enc = ObservationEncoder(feature_activation=feature_activation)
     for k, obs_shape in obs_shapes.items():
         obs_modality = ObsUtils.OBS_KEYS_TO_MODALITIES[k]
@@ -84,14 +85,20 @@ def obs_encoder_factory(
         randomizer = None if enc_kwargs["obs_randomizer_class"] is None else \
             ObsUtils.OBS_RANDOMIZERS[enc_kwargs["obs_randomizer_class"]](**enc_kwargs["obs_randomizer_kwargs"])
 
-        if "combined::point_cloud" in k:
-            # breakpoint()
-            ObsUtils.register_encoder_core(PointNet)
-            enc_kwargs["core_class"] = 'PointNet'
+        # if "combined::color_point_cloud" in k:
+        #     ObsUtils.register_encoder_core(PointNet)
+        #     enc_kwargs["core_class"] = 'PointNet'
+        #     enc_kwargs["core_kwargs"] = {'input_dim': 6, # r,g,b,x,y,z
+        #                                 'output_dim': 256,
+        #                                 'layer_dims': [64, 256, 512]}
+        # if "combined::point_cloud" in k:
+        #     # breakpoint()
+        #     ObsUtils.register_encoder_core(PointNet)
+        #     enc_kwargs["core_class"] = 'PointNet'
 
-            enc_kwargs["core_kwargs"] = {'input_dim': 6, # r,g,b,x,y,z
-                                        'output_dim': 128,
-                                        'layer_dims': [64, 128, 256, 512]}
+        #     enc_kwargs["core_kwargs"] = {'input_dim': 3, # r,g,b,x,y,z
+        #                                 'output_dim': 256,
+        #                                 'layer_dims': [64, 256, 512]}
 
             # enc_kwargs["core_kwargs"] = {'input_dim': 3, # x,y,z
             #                             'output_dim': 64,
@@ -108,13 +115,6 @@ def obs_encoder_factory(
             #                             'ee_embd_dim': 64,
             #                             'hidden_dim': 128,
             #                             'output_dim': 64}
-        # if "combined::color_point_cloud" in k:
-        #     breakpoint()
-        #     ObsUtils.register_encoder_core(PointNet)
-        #     enc_kwargs["core_class"] = 'PointNet'
-        #     enc_kwargs["core_kwargs"] = {'input_dim': 6, # r,g,b,x,y,z
-        #                                 'output_dim': 128,
-        #                                 'layer_dims': [64, 128, 256, 512]}
 
         enc.register_obs_key(
             name=k,
