@@ -12,8 +12,10 @@ import robomimic.utils.obs_utils as ObsUtils
 import robomimic.envs.env_base as EB
 
 import omnigibson.utils.transform_utils as T
+from omnigibson import object_states
 from omnigibson.objects.primitive_object import PrimitiveObject
 from omnigibson.action_primitives.starter_semantic_action_primitives import StarterSemanticActionPrimitives
+# from omnigibson.action_primitives.starter_semantic_action_primitives_vectorized import StarterSemanticActionPrimitives
 
 
 import torch as th
@@ -33,16 +35,34 @@ class EnvOmniGibson(EB.EnvBase):
     def __init__(
         self,
         env_name,
+        num_envs=1,
         **kwargs,
     ):
         self._env_name = env_name
+        # TODO: Put this code in the right place
+        # kwargs["robots"][0]["obs_modalities"] = ["rgb"]
+        kwargs["env"]["external_sensors"][0]["modalities"] = ["rgb"]
         self._init_kwargs = deepcopy(kwargs)
+        self.og = og
 
         if og.sim is not None:
             og.sim.stop()
             og.clear()
 
-        self.env = og.Environment(configs=kwargs)
+        # self.env = og.Environment(configs=kwargs)
+        temp_obj = {
+            "type": "DatasetObject",
+            "name": "shelf",
+            "category": "shelf",
+            "model": "eniafz",
+            "position": [1.5, 1.2, 1.0],
+            "scale": [1.0, 1.0, 0.2],
+        }
+        kwargs["objects"].append(temp_obj)
+        configs = [kwargs] * num_envs
+        # breakpoint()
+        self.env  = og.VectorEnvironment(num_envs, configs)
+        self.valid_envs = [True] * num_envs
         # TODO: uncomment the following lines for data generation.
         controller_config = {
             "base": {"name": "HolonomicBaseJointController", "motor_type": "position", "command_input_limits": None, "use_impedances": False},
@@ -54,73 +74,84 @@ class EnvOmniGibson(EB.EnvBase):
             "camera": {"name": "JointController", "motor_type": "position", "use_delta_commands": False, "command_input_limits": None, "use_impedances": False},
         }
 
-        self.env.robots[0].reload_controllers(controller_config=controller_config)
-        # self.env.robots[0]._grasping_mode = "sticky"
-        self.env.scene.update_initial_state()
+        robots = []
+        self.markers = []
+        for env in self.env.envs:
+            env.robots[0].reload_controllers(controller_config=controller_config)
+            # self.env.robots[0]._grasping_mode = "sticky"
+            env.scene.update_initial_state()
+            robots.append(env.robots[0])
 
-        # Debug visualization
-        self.eef_current_marker = PrimitiveObject(
-            relative_prim_path="/eef_current_marker",
-            primitive_type="Cube",
-            name="eef_current",
-            size=th.tensor([0.03, 0.03, 0.1]),
-            visual_only=True,
-            rgba=th.tensor([1, 0, 0, 1]),
-        ) if DEBUG else None
-        self.eef_goal_marker = PrimitiveObject(
-            relative_prim_path="/eef_goal_marker",
-            primitive_type="Cube",
-            name="eef_goal_marker",
-            size=th.tensor([0.03, 0.03, 0.1]),
-            visual_only=True,
-            rgba=th.tensor([0, 1, 0, 1]),
-        ) if DEBUG else None
+            # Debug visualization
+            self.eef_current_marker = PrimitiveObject(
+                relative_prim_path="/eef_current_marker",
+                primitive_type="Cube",
+                name="eef_current",
+                size=th.tensor([0.03, 0.03, 0.1]),
+                visual_only=True,
+                rgba=th.tensor([1, 0, 0, 1]),
+            ) if DEBUG else None
+            self.eef_goal_marker = PrimitiveObject(
+                relative_prim_path="/eef_goal_marker",
+                primitive_type="Cube",
+                name="eef_goal_marker",
+                size=th.tensor([0.03, 0.03, 0.1]),
+                visual_only=True,
+                rgba=th.tensor([0, 1, 0, 1]),
+            ) if DEBUG else None
 
-        # Debug visualization for bimanual setup
-        self.eef_current_marker_left = PrimitiveObject(
-            relative_prim_path="/eef_current_marker_left",
-            primitive_type="Cube",
-            name="eef_current_left",
-            size=th.tensor([0.03, 0.03, 0.1]),
-            visual_only=True,
-            rgba=th.tensor([1, 0, 0, 1]),
-        ) if DEBUG else None
-        self.eef_goal_marker_left = PrimitiveObject(
-            relative_prim_path="/eef_goal_marker_left",
-            primitive_type="Cube",
-            name="eef_goal_marker_left",
-            size=th.tensor([0.03, 0.03, 0.1]),
-            visual_only=True,
-            rgba=th.tensor([0, 1, 0, 1]),
-        ) if DEBUG else None
-        self.eef_current_marker_right = PrimitiveObject(
-            relative_prim_path="/eef_current_marker_right",
-            primitive_type="Cube",
-            name="eef_current_right",
-            size=th.tensor([0.03, 0.03, 0.1]),
-            visual_only=True,
-            rgba=th.tensor([1, 0, 0, 1]),
-        ) if DEBUG else None
-        self.eef_goal_marker_right = PrimitiveObject(
-            relative_prim_path="/eef_goal_marker_right",
-            primitive_type="Cube",
-            name="eef_goal_marker_right",
-            size=th.tensor([0.03, 0.03, 0.1]),
-            visual_only=True,
-            rgba=th.tensor([0, 0, 1, 1]),
-        ) if DEBUG else None
+            eef_markers_per_env = dict()
+            # Debug visualization for bimanual setup
+            eef_markers_per_env["eef_current_marker_left"] = PrimitiveObject(
+                relative_prim_path="/eef_current_marker_left",
+                primitive_type="Cube",
+                name="eef_current_left",
+                size=th.tensor([0.03, 0.03, 0.1]),
+                visual_only=True,
+                rgba=th.tensor([1, 0, 0, 1]),
+            ) if DEBUG else None
+            eef_markers_per_env["eef_goal_marker_left"] = PrimitiveObject(
+                relative_prim_path="/eef_goal_marker_left",
+                primitive_type="Cube",
+                name="eef_goal_marker_left",
+                size=th.tensor([0.03, 0.03, 0.1]),
+                visual_only=True,
+                rgba=th.tensor([0, 1, 0, 1]),
+            ) if DEBUG else None
+            eef_markers_per_env["eef_current_marker_right"] = PrimitiveObject(
+                relative_prim_path="/eef_current_marker_right",
+                primitive_type="Cube",
+                name="eef_current_right",
+                size=th.tensor([0.03, 0.03, 0.1]),
+                visual_only=True,
+                rgba=th.tensor([1, 0, 0, 1]),
+            ) if DEBUG else None
+            eef_markers_per_env["eef_goal_marker_right"] = PrimitiveObject(
+                relative_prim_path="/eef_goal_marker_right",
+                primitive_type="Cube",
+                name="eef_goal_marker_right",
+                size=th.tensor([0.03, 0.03, 0.1]),
+                visual_only=True,
+                rgba=th.tensor([0, 0, 1, 1]),
+            ) if DEBUG else None
 
-        if DEBUG:
-            # og.sim.batch_add_objects([self.eef_current_marker, self.eef_goal_marker], [self.env.scene] * 2)
-            og.sim.batch_add_objects([self.eef_current_marker_left, self.eef_goal_marker_left, 
-                                      self.eef_current_marker_right, self.eef_goal_marker_right], [self.env.scene] * 4)
-            og.sim.step()
+            self.markers.append(eef_markers_per_env)
 
-        self.primitive = StarterSemanticActionPrimitives(self.env, self.env.robots[0], enable_head_tracking=False)
+            if DEBUG:
+                # og.sim.batch_add_objects([self.eef_current_marker, self.eef_goal_marker], [self.env.scene] * 2)
+                og.sim.batch_add_objects([eef_markers_per_env["eef_current_marker_left"], 
+                                            eef_markers_per_env["eef_goal_marker_left"], 
+                                            eef_markers_per_env["eef_current_marker_right"], 
+                                            eef_markers_per_env["eef_goal_marker_right"]], 
+                                            [env.scene] * 4)
+                og.sim.step()
+
+        self.primitive = StarterSemanticActionPrimitives(self.env, robots, enable_head_tracking=False)
         # Create CuRobo instance
         self.cmg = self.primitive._motion_generator
+        breakpoint()
 
-    def step(self, action):
+    def step(self, action, video_writer=None):
         """
         Step in the environment with an action.
 
@@ -134,11 +165,15 @@ class EnvOmniGibson(EB.EnvBase):
             info (dict): extra information
         """
         obs, r, done, truncated, info = self.env.step(action)
+        if video_writer:
+            for env_idx, single_env in enumerate(self.env.envs):
+                external_obs = single_env.external_sensors["external_sensor0"].get_obs()[0]["rgb"][:,:,:3].numpy()
+                video_writer[env_idx].append_data(external_obs)
         return obs, r, done, info
 
     # TODO: make it more generalizable
     # Get task relevant objects based on the env name (BDDL activity name)
-    def _get_task_relevant_objs(self):
+    def _get_task_relevant_objs(self, single_env):
         if self.name.startswith("test_pen_book"):
             obj_names = ["rubber_eraser.n.01_1", "hardback.n.01_1"]
         elif self.name.startswith("test_cabinet"):
@@ -148,13 +183,14 @@ class EnvOmniGibson(EB.EnvBase):
         elif self.name.startswith("test_tiago_notebook"):
             obj_names = ["notebook.n.01_1", "breakfast_table.n.01_1"]
         elif self.name.startswith("test_tiago_cup"):
-            obj_names = ["coffee_cup.n.01_1", "dixie_cup.n.01_1", "breakfast_table.n.01_1"]
+            # obj_names = ["coffee_cup.n.01_1", "dixie_cup.n.01_1", "breakfast_table.n.01_1"]
+            return [single_env.scene.object_registry("name", name) for name in ["coffee_cup", "teacup", "breakfast_table"]]
         elif self.name.startswith("test_r1_cup"):
-            return [self.env.scene.object_registry("name", name) for name in ["coffee_cup", "teacup", "breakfast_table"]]
+            return [single_env.scene.object_registry("name", name) for name in ["coffee_cup", "teacup", "breakfast_table"]]
         else:
             raise ValueError(f"Unknown environment name: {self.name}")
 
-        return [self.env.task.object_scope[obj] for obj in obj_names]
+        return [single_env.task.object_scope[obj] for obj in obj_names]
 
     # TODO: make it more generalizable
     # randomize the pose of all the task relevant objects in xy-pos and z-rot
@@ -173,7 +209,8 @@ class EnvOmniGibson(EB.EnvBase):
                 pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
                 pos += pos_diff
                 # TODO： without mobile motion， the target pose need to be very carefully selected
-                pos += th.from_numpy(np.array([-.15, 0.0, 0]))
+                # pos += th.from_numpy(np.array([-.15, 0.0, 0]))
+                pos += th.from_numpy(np.array([-.05, 0.0, 0]))
                 orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
                 orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
                 obj.set_position_orientation(pos, orn)
@@ -209,39 +246,40 @@ class EnvOmniGibson(EB.EnvBase):
         Returns:
             observation (dict): initial observation dictionary.
         """
-        obs, info = self.env.reset()
+        self.env.reset()
 
-        # D0 is the original distribution (no randomization at all - deterministic reset)
-        if self.name.endswith("D0"):
-            pass
+        for single_env in self.env.envs:
+            # D0 is the original distribution (no randomization at all - deterministic reset)
+            if self.name.endswith("D0"):
+                pass
 
-        # D1 is the distribution with randomization in xy-pos and z-rot
-        elif self.name.endswith("D1"):
-            task_relevant_objs = self._get_task_relevant_objs()
-            self._randomize_object_pose(task_relevant_objs)
+            # D1 is the distribution with randomization in xy-pos and z-rot
+            elif self.name.endswith("D1"):
+                task_relevant_objs = self._get_task_relevant_objs(single_env)
+                self._randomize_object_pose(task_relevant_objs)
 
-            # Step one time to update the scene and render a few times as well
-            og.sim.step()
-            for _ in range(5):
-                og.sim.render()
+                # Step one time to update the scene and render a few times as well
+                og.sim.step()
+                for _ in range(5):
+                    og.sim.render()
 
-            # Update the observation
-            obs, info = self.env.get_obs()
-        
-        elif self.name.endswith("D2"):
-            # for arm role change
-            task_relevant_objs = self._get_task_relevant_objs()
-            self._randomize_object_pose_D2(task_relevant_objs)
+                # Update the observation
+                obs, info = single_env.get_obs()
+            
+            elif self.name.endswith("D2"):
+                # for arm role change
+                task_relevant_objs = self._get_task_relevant_objs(single_env)
+                self._randomize_object_pose_D2(task_relevant_objs)
 
-            # Step one time to update the scene and render a few times as well
-            og.sim.step()
-            for _ in range(5):
-                og.sim.render()
+                # Step one time to update the scene and render a few times as well
+                og.sim.step()
+                for _ in range(5):
+                    og.sim.render()
 
-            # Update the observation
-            obs, info = self.env.get_obs()
-        else:
-            raise ValueError(f"Unknown environment name: {self.name}")
+                # Update the observation
+                obs, info = single_env.get_obs()
+            else:
+                raise ValueError(f"Unknown environment name: {self.name}")
 
         return obs
 
@@ -280,11 +318,14 @@ class EnvOmniGibson(EB.EnvBase):
             return np.zeros((height if height else 128, width if width else 128, 3), dtype=np.uint8)
 
     def get_observation(self, di=None):
-        if di:
-            return di
+        # if di:
+        #     return di
 
-        obs, info = self.env.get_obs()
-        return obs
+        obs_per_env = []
+        for single_env in self.env.envs:
+            obs, info = single_env.get_obs()
+            obs_per_env.append(obs)
+        return obs_per_env
 
     def get_state(self):
         """
@@ -299,7 +340,17 @@ class EnvOmniGibson(EB.EnvBase):
         { str: bool } with at least a "task" key for the overall task success,
         and additional optional keys corresponding to other task criteria.
         """
-        return {"task": len(self.env.task._termination_conditions["predicate"].goal_status["unsatisfied"]) == 0}
+        # NOTE: Currently only using the final state to determine success. Verify satisfactory for all tasks.
+        successes = []
+        for single_env in self.env.envs:
+            teacup_obj = single_env.scene.object_registry("name", "teacup")
+            coffee_cup_obj = single_env.scene.object_registry("name", "coffee_cup")
+            success = teacup_obj.states[object_states.Inside].get_value(coffee_cup_obj)
+            successes.append(success)
+        return successes
+
+
+        # return {"task": len(self.env.task._termination_conditions["predicate"].goal_status["unsatisfied"]) == 0}
 
     @property
     def name(self):
@@ -340,11 +391,12 @@ class EnvOmniGibson(EB.EnvBase):
     def create_for_data_processing(
         cls,
         env_name,
+        num_envs=1,
         **kwargs,
     ):
         # Always flatten observation space for data processing
         kwargs["env"]["flatten_obs_space"] = True
-        return cls(env_name=env_name, **kwargs)
+        return cls(env_name=env_name, num_envs=num_envs, **kwargs)
 
     @property
     def rollout_exceptions(self):

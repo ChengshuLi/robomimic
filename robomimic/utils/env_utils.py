@@ -257,6 +257,7 @@ def create_env_for_data_processing(
     render_offscreen=None, 
     use_image_obs=None, 
     use_depth_obs=None, 
+    num_envs=1,
 ):
     """
     Creates environment for processing dataset observations and rewards.
@@ -293,7 +294,7 @@ def create_env_for_data_processing(
         env_class = get_env_class(env_type=env_type)
 
     if env_type == EB.EnvType.OG_TYPE:
-        return env_class.create_for_data_processing(env_name=env_name, **env_kwargs)
+        return env_class.create_for_data_processing(env_name=env_name, num_envs=num_envs, **env_kwargs)
 
     # remove possibly redundant values in kwargs
     env_kwargs = deepcopy(env_kwargs)
