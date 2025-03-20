@@ -3,6 +3,7 @@ This file contains the robosuite environment wrapper that is used
 to provide a standardized environment API for training policies and interacting
 with metadata present in datasets.
 """
+import cv2
 import json
 import numpy as np
 from copy import deepcopy
@@ -12,6 +13,7 @@ import robomimic.utils.obs_utils as ObsUtils
 import robomimic.envs.env_base as EB
 
 import omnigibson.utils.transform_utils as T
+from omnigibson import object_states
 from omnigibson.objects.primitive_object import PrimitiveObject
 from omnigibson.action_primitives.starter_semantic_action_primitives import StarterSemanticActionPrimitives
 
@@ -27,6 +29,22 @@ gm.ENABLE_FLATCACHE = False
 
 DEBUG = True
 
+def hori_concatenate_image(images):
+    # Ensure the images have the same height
+    image1 = images[0]
+    concatenated_image = image1
+    for i in range(1, len(images)):
+        image_i = images[i]
+        if image1.shape[0] != image_i.shape[0]:
+            # print("Images do not have the same height. Resizing the second image.")
+            height = image1.shape[0]
+            image_i = cv2.resize(image_i, (int(image_i.shape[1] * (height / image_i.shape[0])), height))
+
+        # Concatenate the images side by side
+        concatenated_image = np.concatenate((concatenated_image, image_i), axis=1)
+
+    return concatenated_image
+
 
 class EnvOmniGibson(EB.EnvBase):
     """Wrapper class for robosuite environments (https://github.com/ARISE-Initiative/robosuite)"""
@@ -38,24 +56,34 @@ class EnvOmniGibson(EB.EnvBase):
         self._env_name = env_name
         self._init_kwargs = deepcopy(kwargs)
 
+        # Setting the objects (breakfast table, teacup, coffee_cup) to be more in the centre
+        # Setting some default joint positions of the robot  
+        kwargs["objects"][0]["position"] = [0.5, 0.0, 0.7]
+        kwargs["objects"][1]["position"] = [0.5, 0.3, 0.8]
+        kwargs["objects"][2]["position"] = [0.5, -0.2, 0.8]
+        kwargs["robots"][0]["reset_joint_pos"][0] = -1.0
+        kwargs["robots"][0]["reset_joint_pos"][10] = 0.0
+        kwargs["robots"][0]["reset_joint_pos"][11] = 0.0
+
         if og.sim is not None:
             og.sim.stop()
             og.clear()
 
         self.env = og.Environment(configs=kwargs)
+        self.valid_env = True
         # TODO: uncomment the following lines for data generation.
         controller_config = {
             "base": {"name": "HolonomicBaseJointController", "motor_type": "position", "command_input_limits": None, "use_impedances": False},
             "trunk": {"name": "JointController", "motor_type": "position", "use_delta_commands": False, "command_input_limits": None, "use_impedances": False},
             "arm_left": {"name": "JointController", "motor_type": "position", "use_delta_commands": False, "command_input_limits": None, "use_impedances": False},
             "arm_right": {"name": "JointController", "motor_type": "position", "use_delta_commands": False, "command_input_limits": None, "use_impedances": False},
-            "gripper_left": {"name": "MultiFingerGripperController", "mode": "binary"},
-            "gripper_right": {"name": "MultiFingerGripperController", "mode": "binary"},
+            "gripper_left": {"name": "MultiFingerGripperController", "mode": "binary", "command_input_limits": (0.0, 1.0),},
+            "gripper_right": {"name": "MultiFingerGripperController", "mode": "binary", "command_input_limits": (0.0, 1.0),},
             "camera": {"name": "JointController", "motor_type": "position", "use_delta_commands": False, "command_input_limits": None, "use_impedances": False},
         }
 
         self.env.robots[0].reload_controllers(controller_config=controller_config)
-        # self.env.robots[0]._grasping_mode = "sticky"
+        self.env.robots[0]._grasping_mode = "sticky"
         self.env.scene.update_initial_state()
 
         # Debug visualization
@@ -116,11 +144,12 @@ class EnvOmniGibson(EB.EnvBase):
                                       self.eef_current_marker_right, self.eef_goal_marker_right], [self.env.scene] * 4)
             og.sim.step()
 
-        self.primitive = StarterSemanticActionPrimitives(self.env, self.env.robots[0], enable_head_tracking=False)
+        self.primitive = StarterSemanticActionPrimitives(self.env, self.env.robots[0], enable_head_tracking=True)
+
         # Create CuRobo instance
         self.cmg = self.primitive._motion_generator
 
-    def step(self, action):
+    def step(self, action, video_writer=None):
         """
         Step in the environment with an action.
 
@@ -134,6 +163,16 @@ class EnvOmniGibson(EB.EnvBase):
             info (dict): extra information
         """
         obs, r, done, truncated, info = self.env.step(action)
+        if video_writer:
+            robot_name = self.env.robots[0].name
+            ego_img = obs[f"{robot_name}::{robot_name}:eyes:Camera:0::rgb"]
+            eef_left_img = obs[f"{robot_name}::{robot_name}:left_eef_link:Camera:0::rgb"]
+            eef_right_img = obs[f"{robot_name}::{robot_name}:right_eef_link:Camera:0::rgb"]
+            concatenated_img = hori_concatenate_image([ego_img, eef_left_img, eef_right_img])
+            video_writer.append_data(concatenated_img)
+        #     for env_idx, single_env in enumerate(self.env.envs):
+        #         external_obs = single_env.external_sensors["external_sensor0"].get_obs()[0]["rgb"][:,:,:3].numpy()
+        #         video_writer[env_idx].append_data(external_obs)
         return obs, r, done, info
 
     # TODO: make it more generalizable
@@ -147,8 +186,8 @@ class EnvOmniGibson(EB.EnvBase):
             obj_names = ["gift_box.n.01_1"]
         elif self.name.startswith("test_tiago_notebook"):
             obj_names = ["notebook.n.01_1", "breakfast_table.n.01_1"]
-        elif self.name.startswith("test_tiago_cup"):
-            obj_names = ["coffee_cup.n.01_1", "dixie_cup.n.01_1", "breakfast_table.n.01_1"]
+        elif self.name.startswith("test_tiago_single_arm_cup"):
+            return [self.env.scene.object_registry("name", name) for name in ["coffee_cup", "teacup", "breakfast_table"]]
         elif self.name.startswith("test_r1_cup"):
             return [self.env.scene.object_registry("name", name) for name in ["coffee_cup", "teacup", "breakfast_table"]]
         else:
@@ -159,24 +198,31 @@ class EnvOmniGibson(EB.EnvBase):
     # TODO: make it more generalizable
     # randomize the pose of all the task relevant objects in xy-pos and z-rot
     def _randomize_object_pose(self, objs):
-        pos_magnitude = 0.10  # 5cm
-        rot_magnitude = np.pi / 12  # 15 degrees
 
-        # for debugging
-        # pos_magnitude = 0.001
-        # rot_magnitude = np.pi / 10000  # 15 degrees
-
+        # Sampling random object poses on table using OG API
         for obj in objs:
             if "table" not in obj.name:
-                pos, orn = obj.get_position_orientation()
-                pos_diff_xy = np.random.uniform(-pos_magnitude, pos_magnitude, size=2)
-                pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
-                pos += pos_diff
-                # TODO： without mobile motion， the target pose need to be very carefully selected
-                pos += th.from_numpy(np.array([-.15, 0.0, 0]))
-                orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
-                orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
-                obj.set_position_orientation(pos, orn)
+                obj.states[object_states.OnTop].set_value(other=self.env.scene.object_registry("name", "breakfast_table"), new_value=True)
+
+        # # Sampling random object poses on table using custom thresholds
+        # pos_magnitude = [-0.1, 0.1] 
+        # rot_magnitude = np.pi / 12  # 15 degrees
+
+        # # for debugging
+        # # pos_magnitude = 0.001
+        # # rot_magnitude = np.pi / 10000  # 15 degrees
+
+        # for obj in objs:
+        #     if "table" not in obj.name:
+        #         pos, orn = obj.get_position_orientation()
+        #         pos_diff_xy = np.random.uniform(pos_magnitude[0], pos_magnitude[1], size=2)
+        #         pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
+        #         pos += pos_diff
+        #         # TODO： without mobile motion， the target pose need to be very carefully selected
+        #         # pos += th.from_numpy(np.array([-.15, 0.0, 0]))
+        #         orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
+        #         orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
+        #         obj.set_position_orientation(pos, orn)
 
     def _randomize_object_pose_D2(self, objs):
         pos_magnitude = 0.10  # 5cm
@@ -210,6 +256,11 @@ class EnvOmniGibson(EB.EnvBase):
             observation (dict): initial observation dictionary.
         """
         obs, info = self.env.reset()
+        self.valid_env = True
+        self.primitive.valid_env = True
+
+        # Reset the robot to a specific position. Can remove this later
+        self.env.robots[0].set_position_orientation(position=th.tensor([-1.0, 0.0, 0.0]))
 
         # D0 is the original distribution (no randomization at all - deterministic reset)
         if self.name.endswith("D0"):
@@ -293,13 +344,25 @@ class EnvOmniGibson(EB.EnvBase):
         state = og.sim.dump_state(serialized=True)
         return dict(states=state)
 
+    # def is_success(self):
+    #     """
+    #     Check if the task condition(s) is reached. Should return a dictionary
+    #     { str: bool } with at least a "task" key for the overall task success,
+    #     and additional optional keys corresponding to other task criteria.
+    #     """
+    #     return {"task": len(self.env.task._termination_conditions["predicate"].goal_status["unsatisfied"]) == 0}
+    
     def is_success(self):
         """
         Check if the task condition(s) is reached. Should return a dictionary
         { str: bool } with at least a "task" key for the overall task success,
         and additional optional keys corresponding to other task criteria.
         """
-        return {"task": len(self.env.task._termination_conditions["predicate"].goal_status["unsatisfied"]) == 0}
+        # NOTE: Currently only using the final state to determine success. Verify satisfactory for all tasks.
+        teacup_obj = self.env.scene.object_registry("name", "teacup")
+        coffee_cup_obj = self.env.scene.object_registry("name", "coffee_cup")
+        success = teacup_obj.states[object_states.Inside].get_value(coffee_cup_obj)
+        return success
 
     @property
     def name(self):
