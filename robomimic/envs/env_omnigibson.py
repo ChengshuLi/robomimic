@@ -64,6 +64,8 @@ class EnvOmniGibson(EB.EnvBase):
         kwargs["robots"][0]["reset_joint_pos"][0] = -1.0
         kwargs["robots"][0]["reset_joint_pos"][10] = 0.0
         kwargs["robots"][0]["reset_joint_pos"][11] = 0.0
+        kwargs["robots"][0]["obs_modalities"].append("depth_linear")
+        # breakpoint()
 
         if og.sim is not None:
             og.sim.stop()
@@ -85,6 +87,10 @@ class EnvOmniGibson(EB.EnvBase):
         self.env.robots[0].reload_controllers(controller_config=controller_config)
         self.env.robots[0]._grasping_mode = "sticky"
         self.env.scene.update_initial_state()
+        self.robot_name = self.env.robots[0].name
+
+        # # remove later
+        # breakpoint()
 
         # Debug visualization
         self.eef_current_marker = PrimitiveObject(
@@ -329,6 +335,129 @@ class EnvOmniGibson(EB.EnvBase):
             og.sim.render()
         else:
             return np.zeros((height if height else 128, width if width else 128, 3), dtype=np.uint8)
+        
+    def sensor_setup(self):
+        """
+        Setup the sensor position, orientation of the environment
+        """
+        sensor = self.env.robots[0].sensors[f"{self.robot_name}:eyes:Camera:0"]
+        # sensor.image_height = 196
+        # sensor.image_width = 320
+        self.K = sensor.intrinsic_matrix
+        # TODO: These are used in normalization of the point cloud, take a look at these values again!
+        self.pcd_offset = np.array([0.0, 0.0, 0.0])
+        self.pcd_norm_range = np.array([1.0, 1.0, 1.0])
+        self.clip_bbox_size = np.array([10, 10, 10])
+        self.world_to_cam_tf = np.eye(4)
+        self.sensor_max_depth = 10.0
+        self.number_ponits_to_sample = 4096
+
+        sensor_info = {
+            "K": self.K,
+            "world_to_cam_tf": self.world_to_cam_tf,
+            "image_height": sensor.image_height,
+            "image_width": sensor.image_width,
+            'sensor_max_depth': self.sensor_max_depth,
+            'number_points_to_sample': self.number_ponits_to_sample,
+            'pcd_offset': self.pcd_offset,
+            'pcd_norm_range': self.pcd_norm_range,
+            'clip_bbox_size': self.clip_bbox_size,
+        }
+
+        return sensor_info
+    
+    def process_prop(self, obs):
+        # base_qpos = obs['base_qpos'] #  3
+        base_qvel = obs['base_qvel'] # 3
+        trunk_qpos = obs['trunk_qpos'] # 4
+        arm_left_qpos = obs['arm_left_qpos'] #  6
+        arm_right_qpos = obs['arm_right_qpos'] #  6
+        left_gripper_width = obs['gripper_left_qpos'].sum()[None] # 1
+        right_gripper_width = obs['gripper_right_qpos'].sum()[None] # 1
+        prop_state = np.concatenate((base_qvel, trunk_qpos, arm_left_qpos, arm_right_qpos, left_gripper_width, right_gripper_width)) # 21
+        if 'r1' in self.name: assert prop_state.shape[0] == 21
+        return prop_state
+
+    def process_eef(self, obs):
+        eef_left_pos = obs['eef_left_pos'] # 3
+        eef_right_pos = obs['eef_right_pos'] # 3
+        eef_left_quat = obs['eef_left_quat'] # 4
+        eef_right_quat = obs['eef_right_quat'] # 4
+        eef_state = np.concatenate((eef_left_pos, eef_right_pos, eef_left_quat, eef_right_quat)) # 14
+        if 'r1' in self.name: assert eef_state.shape[0] == 14 # for r1 robot
+        return eef_state
+    
+    def process_prop_eef(self, obs):
+        # base_qpos = obs['base_qpos'] #  3
+        base_qvel = obs['base_qvel'] # 3
+        trunk_qpos = obs['trunk_qpos'] # 4
+        arm_left_qpos = obs['arm_left_qpos'] #  6
+        eef_left_pos = obs['eef_left_pos'] # 3
+        eef_left_quat = obs['eef_left_quat'] # 4
+        left_gripper_width = obs['gripper_left_qpos'].sum()[None] # 1
+        arm_right_qpos = obs['arm_right_qpos'] #  6
+        eef_right_pos = obs['eef_right_pos'] # 3
+        eef_right_quat = obs['eef_right_quat'] # 4
+        right_gripper_width = obs['gripper_right_qpos'].sum()[None] # 1
+
+        prop_eef_state = np.concatenate((base_qvel, trunk_qpos, 
+                                     arm_left_qpos, eef_left_pos, eef_left_quat, left_gripper_width, 
+                                     arm_right_qpos, eef_right_pos, eef_right_quat, right_gripper_width)) # 35
+        if 'r1' in self.name: assert prop_eef_state.shape[0] == 35 # for r1 robot
+        return prop_eef_state
+
+    def process_prop_eef_basepose(self, obs):
+        base_qpos = obs['base_qpos'] #  3
+        base_qvel = obs['base_qvel'] # 3
+        trunk_qpos = obs['trunk_qpos'] # 4
+        arm_left_qpos = obs['arm_left_qpos'] #  6
+        eef_left_pos = obs['eef_left_pos'] # 3
+        eef_left_quat = obs['eef_left_quat'] # 4
+        left_gripper_width = obs['gripper_left_qpos'].sum()[None] # 1
+        arm_right_qpos = obs['arm_right_qpos'] #  6
+        eef_right_pos = obs['eef_right_pos'] # 3
+        eef_right_quat = obs['eef_right_quat'] # 4
+        right_gripper_width = obs['gripper_right_qpos'].sum()[None] # 1
+
+        prop_eef_basepose_state = np.concatenate((base_qpos, base_qvel, trunk_qpos, 
+                                     arm_left_qpos, eef_left_pos, eef_left_quat, left_gripper_width, 
+                                     arm_right_qpos, eef_right_pos, eef_right_quat, right_gripper_width)) # 38
+        if 'r1' in self.name: assert prop_eef_basepose_state.shape[0] == 38 # for r1 robot
+        return prop_eef_basepose_state
+    
+    def get_obs_IL(self, di=None):
+        """
+        Get observation for IL baselines
+         - robot proprioceptive state
+         - objects in the scene and their states
+         - default observations
+        """
+
+        # customize observation for IL baselines
+        obs_IL = {}
+
+        # obj_states = self.process_obj()
+        # obs_IL.update(obj_states)
+
+        other_obs = self.get_observation(di) # get default observations
+        obs_IL.update(other_obs)
+        
+        robot_prop_states = self.env.robots[0]._get_proprioception_dict()
+        obs_IL.update(robot_prop_states)
+
+        prop_state = {'prop_state': self.process_prop(robot_prop_states)}
+        obs_IL.update(prop_state)
+
+        prop_eef_state = {'prop_eef_state': self.process_prop_eef(robot_prop_states)}
+        obs_IL.update(prop_eef_state)
+
+        prop_eef_basepose = {'prop_eef_basepose': self.process_prop_eef_basepose(robot_prop_states)}
+        obs_IL.update(prop_eef_basepose)
+
+        # eef_state = {'eef_state': self.process_eef(robot_prop_states)}
+        # obs_IL.update(eef_state)
+
+        return obs_IL
 
     def get_observation(self, di=None):
         if di:
