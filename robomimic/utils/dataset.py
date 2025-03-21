@@ -1131,6 +1131,8 @@ def action_stats_to_normalization_stats(action_stats, action_config):
             #   (input_max - input_min) / (output_max - output_min) = scale <- eq3
             # offset = input_min - scale * output_min <- eq4
             scale = input_range / (output_max - output_min)
+            # remove later
+            scale[0, -1] = 1.0
             offset = input_min - scale * output_min
 
             # offset[ignore_dim] = input_min[ignore_dim] - (output_max + output_min) / 2
