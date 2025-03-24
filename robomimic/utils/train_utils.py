@@ -16,6 +16,7 @@ from collections import OrderedDict
 import matplotlib.pyplot as plt  
 
 from omnigibson.object_states.contact_bodies import ContactBodies
+import omnigibson as og
 import time 
 
 import torch
@@ -352,8 +353,9 @@ def run_rollout(
     if init_states is not None:
         ob_dict = env.reset_to(init_states)
         print('reset to init states done')
-        print('coffee cup pose', ob_dict['object::coffee_cup'][0])
-        print('dexie cup pose', ob_dict['object::dixie_cup'][0])
+        # breakpoint()
+        # print('coffee cup pose', ob_dict['object::coffee_cup'][0])
+        # print('dexie cup pose', ob_dict['object::dixie_cup'][0])
         # breakpoint()
     else:
         # print('breakpoint in run_rollout to check contacts')
@@ -393,6 +395,8 @@ def run_rollout(
     success = { k: False for k in env.is_success() } # success metrics
     got_exception = False
 
+    use_controller = False
+
     try:
         ac_list = []
         
@@ -411,6 +415,7 @@ def run_rollout(
 
             # get action from policy
             per_step_policy_rollout_time = time.time()
+            # breakpoint()
             ac_n, ac = policy(ob=ob_dict, goal=goal_dict)
             # print('policy rollout time', time.time() - per_step_policy_rollout_time)
 
@@ -473,10 +478,26 @@ def run_rollout(
                 # assert not np.allclose(ac1, ac), "policy is not deterministic"
             
             ac_list.append(ac)
+            
 
             # play action
             env_rollout_time = time.time()
-            ob_dict, r, done, truncated, info = env.step(ac)
+            # print("camera action: ", ac[4:6])
+            if use_controller:
+                ob_dict, r, done, truncated, info = env.step(ac)
+                # for _ in range(30): og.sim.step()
+            else:
+                r = 0.0
+                done = False
+                robot = env.env.env.robots[0]
+                # breakpoint()
+                # ac = ac.astype(np.float32)
+                qs = robot.action_to_q(ac.astype(np.float32))
+                robot.set_joint_positions(qs)
+                # print("camera action: ", ac[4:6], qs[robot.camera_control_idx])
+                for _ in range(2): og.sim.step()
+                ob_dict = env.get_obs(action=ac)
+
             # print('env rollout time', time.time() - env_rollout_time)
             if average_step_time == 0:
                 average_step_time = time.time() - per_step_policy_rollout_time
@@ -520,6 +541,7 @@ def run_rollout(
         print("WARNING: got rollout exception {}".format(e))
         got_exception = True
 
+    breakpoint()
     results["Return"] = total_reward
     results["Horizon"] = step_i + 1
     results["Success_Rate"] = float(success["task"])
@@ -630,6 +652,9 @@ def rollout_with_stats(
         num_success = 0
         action_info = []
         for ep_i in iterator:
+            # if ep_i < 5:
+            #     continue
+            # breakpoint()
             init_states = None
             if init_states_list is not None:
                 init_states = init_states_list[ep_i]
