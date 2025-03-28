@@ -350,10 +350,12 @@ def run_rollout(
     ob_dict = env.reset()
 
     if init_states is not None:
-        ob_dict = env.reset_to(init_states)
-        print('reset to init states done')
-        print('coffee cup pose', ob_dict['object::coffee_cup'][0])
-        print('dexie cup pose', ob_dict['object::dixie_cup'][0])
+        # ok now need to change to only set the object position
+        # TODO: this should be a temporary solution, need to directly use the state in the future
+        env.set_object_pose(init_states)
+        print('******************need to customize this for each environment')
+        # ob_dict = env.reset_to(init_states)
+        # print('reset to init states done')
         # breakpoint()
     else:
         # print('breakpoint in run_rollout to check contacts')
@@ -514,6 +516,13 @@ def run_rollout(
             if done or (terminate_on_success and success["task"]):
                 break
 
+            if step_i % 10 == 0:
+
+                early_termination = env.early_termination(step_i)
+                if early_termination:
+                    print("early termination condition met")
+                    break
+
             # print('step time', time.time() - step_time)
 
     except env.rollout_exceptions as e:
@@ -632,7 +641,7 @@ def rollout_with_stats(
         for ep_i in iterator:
             init_states = None
             if init_states_list is not None:
-                init_states = init_states_list[ep_i]
+                init_states = init_states_list[ep_i % len(init_states_list)]
             rollout_timestamp = time.time()
             rollout_info = run_rollout(
                 policy=policy,
@@ -879,6 +888,8 @@ def run_epoch(model, data_loader, epoch, validate=False, num_steps=None, obs_nor
         # sum across all training steps, and convert from seconds to minutes
         step_log_all["Time_{}".format(k)] = np.sum(timing_stats[k]) / 60.
     step_log_all["Time_Epoch"] = (time.time() - epoch_timestamp) / 60.
+    step_log_all['num_steps'] = num_steps
+    step_log_all['epoch'] = epoch
 
     return step_log_all
 

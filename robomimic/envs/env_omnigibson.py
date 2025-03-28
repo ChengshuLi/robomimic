@@ -129,7 +129,7 @@ class EnvOmniGibson(EB.EnvBase):
         self.policy_rollout = False
         self.with_color = False
 
-    def step(self, action):
+    def step(self, action, video_writer=None):
         """
         Step in the environment with an action.
 
@@ -145,6 +145,16 @@ class EnvOmniGibson(EB.EnvBase):
         # og_step_start_time = time.time()
         obs, r, done, truncated, info = self.env.step(action)
         # print('og step time', time.time()-og_step_start_time)
+        
+        # TODO: still need to verify whether the video writer works for the omnigibson env
+        # if video_writer:
+        #     robot_name = self.env.robots[0].name
+        #     viewer_img = obs["external::viewer::rgb"]
+        #     ego_img = obs[f"{robot_name}::{robot_name}:eyes:Camera:0::rgb"]
+        #     eef_left_img = obs[f"{robot_name}::{robot_name}:left_eef_link:Camera:0::rgb"]
+        #     eef_right_img = obs[f"{robot_name}::{robot_name}:right_eef_link:Camera:0::rgb"]
+        #     concatenated_img = hori_concatenate_image([viewer_img, ego_img, eef_left_img, eef_right_img])
+        #     video_writer.append_data(concatenated_img)
 
         # replace the observation with newly added IL obs function 
         # get_obs_time = time.time()
@@ -177,6 +187,40 @@ class EnvOmniGibson(EB.EnvBase):
             raise ValueError(f"Unknown environment name: {self.name}")
 
         return [self.env.task.object_scope[obj] for obj in obj_names]
+
+    def early_termination(self, env_step):
+        """
+        Check if the episode should be terminated early.
+        """
+        if env_step < 20:
+            self.initial_positions = {}
+            for obj in self._get_task_relevant_objs():
+                self.initial_positions[obj.name] = obj.get_position_orientation()
+        
+        # check table movement
+        cur_positions = {}
+        for obj in self._get_task_relevant_objs():
+            cur_positions[obj.name] = obj.get_position_orientation()
+        
+        for key in self.initial_positions.keys():
+            if 'table' in key: # if table is moved, directly terminate the episode 
+                if np.linalg.norm(self.initial_positions[key][0] - cur_positions[key][0]) > 0.1:
+                    return True
+                
+        return False
+
+    def set_object_pose(self, obj_poses):
+        """
+        Set the object pose for the task relevant objects
+        """
+        obj_poses = obj_poses['states']
+        if self.name.startswith("test_r1_cup"):
+            task_relevant_objs = self._get_task_relevant_objs()
+            for obj in task_relevant_objs:
+                if 'table' not in obj.name:
+                    obj.set_position_orientation(obj_poses[obj.name][:3], obj_poses[obj.name][3:])
+            print('finishe setting object pose for r1 robot')
+
 
     # TODO: make it more generalizable
     # randomize the pose of all the task relevant objects in xy-pos and z-rot
@@ -325,6 +369,20 @@ class EnvOmniGibson(EB.EnvBase):
 
             # Update the observation
             obs, info = self.env.get_obs()
+        
+        elif self.name.endswith("D3"):
+            # for arm role change
+            task_relevant_objs = self._get_task_relevant_objs()
+            self._randomize_object_pose_D2(task_relevant_objs)
+
+            # Step one time to update the scene and render a few times as well
+            og.sim.step()
+            for _ in range(5):
+                og.sim.render()
+
+            # Update the observation
+            obs, info = self.env.get_obs()
+
         else:
             raise ValueError(f"Unknown environment name: {self.name}")
         

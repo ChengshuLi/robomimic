@@ -157,6 +157,13 @@ def lr_scheduler_from_optim_params(net_optim_params, net, optimizer):
                 milestones=epoch_schedule,
                 gamma=net_optim_params["learning_rate"]["decay_factor"],
             )
+        elif lr_scheduler_type == "cosine":
+            scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                optimizer=optimizer,
+                T_max=epoch_schedule[0],
+                eta_min=5e-06,
+            )
+            return scheduler
         else:
             raise ValueError("Invalid LR scheduler type: {}".format(lr_scheduler_type))
         
