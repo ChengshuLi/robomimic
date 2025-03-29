@@ -17,10 +17,12 @@ import omnigibson.utils.transform_utils as T
 from omnigibson import object_states
 from omnigibson.objects.primitive_object import PrimitiveObject
 from omnigibson.action_primitives.starter_semantic_action_primitives import StarterSemanticActionPrimitives
+from omnigibson.objects.dataset_object import DatasetObject
 
 from mimicgen.train_scripts.train_prep_data import compute_point_cloud_from_rgbd
+from scipy.spatial.transform import Rotation as R
 
-
+from enum import Enum
 import torch as th
 import numpy as np
 
@@ -31,6 +33,11 @@ gm.USE_GPU_DYNAMICS = False
 gm.ENABLE_FLATCACHE = False
 
 DEBUG = True
+
+class EnvErrTypes(str, Enum):
+    ArmMPFailed = "ArmMPFailed"
+    BaseMPFailed = "BaseMPFailed"
+    BaseSamplingFailed = "BaseSamplingFailed"
 
 def hori_concatenate_image(images):
     # Ensure the images have the same height
@@ -46,7 +53,7 @@ def hori_concatenate_image(images):
         # Concatenate the images side by side
         concatenated_image = np.concatenate((concatenated_image, image_i), axis=1)
 
-    return concatenated_image
+    return np.array(concatenated_image)
 
 
 class EnvOmniGibson(EB.EnvBase):
@@ -58,6 +65,8 @@ class EnvOmniGibson(EB.EnvBase):
     ):
         self._env_name = env_name
         self._init_kwargs = deepcopy(kwargs)
+        self.add_distractor_objects = False
+        self.single_arm = True
 
         # Setting the objects (breakfast table, teacup, coffee_cup) to be more in the centre
         # Setting some default joint positions of the robot  
@@ -65,10 +74,20 @@ class EnvOmniGibson(EB.EnvBase):
         kwargs["objects"][1]["position"] = [0.5, 0.3, 0.8]
         kwargs["objects"][2]["position"] = [0.5, -0.2, 0.8]
         kwargs["robots"][0]["reset_joint_pos"][0] = -1.0
-        kwargs["robots"][0]["reset_joint_pos"][10] = 0.0
-        kwargs["robots"][0]["reset_joint_pos"][11] = 0.0
+        if kwargs["robots"][0]["type"] == "Tiago":
+            kwargs["robots"][0]["reset_joint_pos"][10] = 0.0
+            kwargs["robots"][0]["reset_joint_pos"][11] = 0.0
+        # Explicity add the depth_linear and rgb modalities
         kwargs["robots"][0]["obs_modalities"].append("depth_linear")
-        # breakpoint()
+        kwargs["robots"][0]["obs_modalities"].append("rgb")
+
+        if kwargs["robots"][0]["type"] == "R1":
+            # Setting the camera height and width here because setting it later causes issues
+            kwargs["robots"][0]["sensor_config"]["VisionSensor"]["sensor_kwargs"]["image_height"] = 128
+            kwargs["robots"][0]["sensor_config"]["VisionSensor"]["sensor_kwargs"]["image_width"] = 128
+
+        if self.add_distractor_objects:
+            kwargs["scene"]["load_object_categories"].append("straight_chair")
 
         if og.sim is not None:
             og.sim.stop()
@@ -76,6 +95,7 @@ class EnvOmniGibson(EB.EnvBase):
 
         self.env = og.Environment(configs=kwargs)
         self.valid_env = True
+        self.err = "None"
         # TODO: uncomment the following lines for data generation.
         controller_config = {
             "base": {"name": "HolonomicBaseJointController", "motor_type": "position", "command_input_limits": None, "use_impedances": False},
@@ -153,13 +173,17 @@ class EnvOmniGibson(EB.EnvBase):
                                       self.eef_current_marker_right, self.eef_goal_marker_right], [self.env.scene] * 4)
             og.sim.step()
 
-        # self.primitive = StarterSemanticActionPrimitives(self.env, self.env.robots[0], enable_head_tracking=True)
+        enable_head_tracking = False
+        if kwargs["robots"][0]["type"] == "Tiago":
+            enable_head_tracking = True
+        self.primitive = StarterSemanticActionPrimitives(self.env, self.env.robots[0], enable_head_tracking=enable_head_tracking, curobo_batch_size=10)
 
         # Create CuRobo instance
-        # self.cmg = self.primitive._motion_generator
+        self.cmg = self.primitive._motion_generator
 
         self.policy_rollout = False
         self.with_color = False
+
 
     def step(self, action, video_writer=None):
         """
@@ -177,10 +201,11 @@ class EnvOmniGibson(EB.EnvBase):
         obs, r, done, truncated, info = self.env.step(action)
         if video_writer:
             robot_name = self.env.robots[0].name
-            ego_img = obs[f"{robot_name}::{robot_name}:eyes:Camera:0::rgb"]
-            eef_left_img = obs[f"{robot_name}::{robot_name}:left_eef_link:Camera:0::rgb"]
-            eef_right_img = obs[f"{robot_name}::{robot_name}:right_eef_link:Camera:0::rgb"]
-            concatenated_img = hori_concatenate_image([ego_img, eef_left_img, eef_right_img])
+            ego_img = obs[f"{robot_name}::{robot_name}:eyes:Camera:0::rgb"].numpy()[:, :, :3]
+            # eef_left_img = obs[f"{robot_name}::{robot_name}:left_eef_link:Camera:0::rgb"]
+            # eef_right_img = obs[f"{robot_name}::{robot_name}:right_eef_link:Camera:0::rgb"]
+            viewer_img = og.sim.viewer_camera._get_obs()[0]['rgb'].numpy()[:, :, :3]
+            concatenated_img = hori_concatenate_image([ego_img, viewer_img])
             video_writer.append_data(concatenated_img)
         #     for env_idx, single_env in enumerate(self.env.envs):
         #         external_obs = single_env.external_sensors["external_sensor0"].get_obs()[0]["rgb"][:,:,:3].numpy()
@@ -217,33 +242,8 @@ class EnvOmniGibson(EB.EnvBase):
     # randomize the pose of all the task relevant objects in xy-pos and z-rot
     def _randomize_object_pose(self, objs):
 
-        # Sampling random object poses on table using OG API
-        for obj in objs:
-            if "table" not in obj.name:
-                obj.states[object_states.OnTop].set_value(other=self.env.scene.object_registry("name", "breakfast_table"), new_value=True)
-
-        # # Sampling random object poses on table using custom thresholds
-        # pos_magnitude = [-0.1, 0.1] 
-        # rot_magnitude = np.pi / 12  # 15 degrees
-
-        # # for debugging
-        # # pos_magnitude = 0.001
-        # # rot_magnitude = np.pi / 10000  # 15 degrees
-
-        # for obj in objs:
-        #     if "table" not in obj.name:
-        #         pos, orn = obj.get_position_orientation()
-        #         pos_diff_xy = np.random.uniform(pos_magnitude[0], pos_magnitude[1], size=2)
-        #         pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
-        #         pos += pos_diff
-        #         # TODO： without mobile motion， the target pose need to be very carefully selected
-        #         # pos += th.from_numpy(np.array([-.15, 0.0, 0]))
-        #         orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
-        #         orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
-        #         obj.set_position_orientation(pos, orn)
-
-    def _randomize_object_pose_D2(self, objs):
-        pos_magnitude = 0.10  # 5cm
+        # Sampling random object poses on table using custom thresholds
+        pos_magnitude = [-0.1, 0.1] 
         rot_magnitude = np.pi / 12  # 15 degrees
 
         # for debugging
@@ -253,17 +253,91 @@ class EnvOmniGibson(EB.EnvBase):
         for obj in objs:
             if "table" not in obj.name:
                 pos, orn = obj.get_position_orientation()
-                pos_diff_xy = np.random.uniform(-pos_magnitude, pos_magnitude, size=2)
+                pos_diff_xy = np.random.uniform(pos_magnitude[0], pos_magnitude[1], size=2)
                 pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
                 pos += pos_diff
                 # TODO： without mobile motion， the target pose need to be very carefully selected
-                pos += th.from_numpy(np.array([-.15, 0.0, 0]))
+                # pos += th.from_numpy(np.array([-.15, 0.0, 0]))
                 orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
                 orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
-
-                pos[1] = -pos[1] # mirror the position along the y-axis
-                orn = T.mat2quat(T.euler2mat(th.tensor([0.0, 0.0, np.pi])) @ T.quat2mat(orn)) # add pi orientation along the y-axis
                 obj.set_position_orientation(pos, orn)
+
+    def _randomize_object_pose_D2(self, objs):
+        # pos_magnitude = 0.10  # 5cm
+        # rot_magnitude = np.pi / 12  # 15 degrees
+
+        # # for debugging
+        # # pos_magnitude = 0.001
+        # # rot_magnitude = np.pi / 10000  # 15 degrees
+
+        # for obj in objs:
+        #     if "table" not in obj.name:
+        #         pos, orn = obj.get_position_orientation()
+        #         pos_diff_xy = np.random.uniform(-pos_magnitude, pos_magnitude, size=2)
+        #         pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
+        #         pos += pos_diff
+        #         # TODO： without mobile motion， the target pose need to be very carefully selected
+        #         pos += th.from_numpy(np.array([-.15, 0.0, 0]))
+        #         orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
+        #         orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
+
+        #         pos[1] = -pos[1] # mirror the position along the y-axis
+        #         orn = T.mat2quat(T.euler2mat(th.tensor([0.0, 0.0, np.pi])) @ T.quat2mat(orn)) # add pi orientation along the y-axis
+        #         obj.set_position_orientation(pos, orn)
+
+        # Sampling random object poses on table using OG API
+        for obj in objs:
+            if "table" not in obj.name:
+                obj.states[object_states.OnTop].set_value(other=self.env.scene.object_registry("name", "breakfast_table"), new_value=True)
+
+    def _randomize_object_pose_D3(self, objs):
+        # # remove breakfast table from scene
+        # breakfast_table = self.env.scene.object_registry("name", "breakfast_table")
+        # self.env.scene.remove_object(breakfast_table)
+        # coffee_cup = self.env.scene.object_registry("name", "coffee_cup")
+        # teacup = self.env.scene.object_registry("name", "teacup")
+        # coffee_cup.set_position_orientation(position=th.tensor([0.0, 1.3, 0.4]))
+        # teacup.set_position_orientation(position=th.tensor([0.0, 1.2, 0.4]))
+        # for _ in range(10): og.sim.step()
+
+        # # add new receptacle object
+        # rot_euler = [0.0, 0.0, 180.0]
+        # rot_quat = th.tensor(R.from_euler('xyz', rot_euler, degrees=True).as_quat())
+        # obj = DatasetObject(
+        #     name= "breakfast_table",
+        #     category="commercial_kitchen_sink",
+        #     model="nmxgbm",
+        #     position=th.tensor([0.5, 0.0, 0.7]),
+        #     scale=th.tensor([1.0, 1.0, 0.5]),
+        #     orientation=rot_quat
+        # )
+        # self.env.scene.add_object(obj)
+        # for _ in range(10): og.sim.step()
+        # obj.set_position_orientation(orientation=rot_quat)
+
+        for _ in range(10): og.sim.step()
+
+        # receptacle = self.env.scene.object_registry("name", "breakfast_table")
+        # # receptacle.root_link.mass = 1e3
+        # # for link_number in range(1, 5):
+        # #     receptacle.links[f"link_{link_number}"].mass = 100.0
+        # receptacle.keep_still()
+        # # for joint_number in range(1, 5):
+        # #     receptacle.joints[f"link_{link_number}"].mass = 100.0
+        # # if need to set joint friction: receptacle.links["link_5"].friction
+        # # receptacle_joint_pos = np.random.uniform(0.1, 0.6)
+        # receptacle_joint_pos = 0.6
+        # receptacle.joints["j_link_0"].set_pos(receptacle_joint_pos, normalized=True)
+
+        # Sampling random object poses on table using OG API
+        for obj in objs:
+            if "teacup" in obj.name:
+                obj.states[object_states.OnTop].set_value(other=self.env.scene.object_registry("name", "breakfast_table"), new_value=True)
+
+        for _ in range(10): og.sim.step()
+
+        # breakpoint()
+
 
     # TODO: make it more generalizable
     def reset(self):
@@ -277,9 +351,24 @@ class EnvOmniGibson(EB.EnvBase):
         if not self.policy_rollout:
             self.valid_env = True
             self.primitive.valid_env = True
+            self.err = "None"
 
         # Reset the robot to a specific position. Can remove this later
         self.env.robots[0].set_position_orientation(position=th.tensor([-1.0, 0.0, 0.0]))
+
+        if self.add_distractor_objects:
+            # Set chair poses
+            chair_0 = self.env.scene.object_registry("name", "straight_chair_amgwaw_0")
+            chair_0.set_position_orientation(position=th.tensor([-0.0725,  0.0028,  0.4485]), orientation=th.tensor([ 0.0016,  0.0020, -0.1448,  0.9895]))
+
+            chair_1 = self.env.scene.object_registry("name", "straight_chair_amgwaw_1")
+            chair_1.set_position_orientation(position=th.tensor([ 0.4266, -1.0887,  0.4484]), orientation=th.tensor([ 2.0414e-05, -1.7101e-03,  9.9991e-01, -1.3466e-02]))
+
+            chair_3 = self.env.scene.object_registry("name", "straight_chair_eospnr_0")
+            chair_3.set_position_orientation(position=th.tensor([-0.5871,  2.2136,  0.4930]))
+            chair_4 = self.env.scene.object_registry("name", "straight_chair_eospnr_1")
+            chair_4.set_position_orientation(position=th.tensor([-1.2552,  2.3325,  0.4930]))
+            for _ in range(20): og.sim.step()
 
         # D0 is the original distribution (no randomization at all - deterministic reset)
         if self.name.endswith("D0"):
@@ -299,9 +388,21 @@ class EnvOmniGibson(EB.EnvBase):
             obs, info = self.env.get_obs()
         
         elif self.name.endswith("D2"):
-            # for arm role change
+            # # for arm role change
             task_relevant_objs = self._get_task_relevant_objs()
             self._randomize_object_pose_D2(task_relevant_objs)
+
+            # Step one time to update the scene and render a few times as well
+            og.sim.step()
+            for _ in range(5):
+                og.sim.render()
+
+            # Update the observation
+            obs, info = self.env.get_obs()
+        elif self.name.endswith("D3"):
+            # # for arm role change
+            task_relevant_objs = self._get_task_relevant_objs()
+            self._randomize_object_pose_D3(task_relevant_objs)
 
             # Step one time to update the scene and render a few times as well
             og.sim.step()
@@ -391,8 +492,8 @@ class EnvOmniGibson(EB.EnvBase):
         Setup the sensor position, orientation of the environment
         """
         sensor = self.env.robots[0].sensors[f"{self.robot_name}:eyes:Camera:0"]
-        # sensor.image_height = 196
-        # sensor.image_width = 320
+        # sensor.image_height = 128
+        # sensor.image_width = 128
         self.K = sensor.intrinsic_matrix
         # TODO: These are used in normalization of the point cloud, take a look at these values again!
         self.pcd_offset = np.array([0.0, 0.0, 0.0])
@@ -413,6 +514,14 @@ class EnvOmniGibson(EB.EnvBase):
             'pcd_norm_range': self.pcd_norm_range,
             'clip_bbox_size': self.clip_bbox_size,
         }
+
+        # left_eef_sensor = self.env.robots[0].sensors[f"{self.robot_name}:left_eef_link:Camera:0"]
+        # left_eef_sensor.image_height = 200
+        # left_eef_sensor.image_width = 200
+
+        # right_eef_sensor = self.env.robots[0].sensors[f"{self.robot_name}:right_eef_link:Camera:0"]
+        # right_eef_sensor.image_height = 200
+        # right_eef_sensor.image_width = 200
 
         return sensor_info
     
@@ -585,6 +694,13 @@ class EnvOmniGibson(EB.EnvBase):
         teacup_obj = self.env.scene.object_registry("name", "teacup")
         coffee_cup_obj = self.env.scene.object_registry("name", "coffee_cup")
         success = teacup_obj.states[object_states.Inside].get_value(coffee_cup_obj)
+        
+        # if teacup is grasped
+        success = teacup_obj.states[object_states.Touching].get_value(other=self.env.robots[0])
+
+        # if coffee_cup is grasped
+        success = coffee_cup_obj.states[object_states.Touching].get_value(other=self.env.robots[0])
+
         return {"task": success}
 
     @property
