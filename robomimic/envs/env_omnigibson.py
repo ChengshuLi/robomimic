@@ -172,8 +172,8 @@ class EnvOmniGibson(EB.EnvBase):
                 pos_diff_xy = np.random.uniform(-pos_magnitude, pos_magnitude, size=2)
                 pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
                 pos += pos_diff
-                # TODO： without mobile motion， the target pose need to be very carefully selected
-                pos += th.from_numpy(np.array([-.15, 0.0, 0]))
+                # TODO： without mobile motion, the target pose need to be very carefully selected
+                # pos += th.from_numpy(np.array([-.15, 0.0, 0]))
                 orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
                 orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
                 obj.set_position_orientation(pos, orn)
@@ -192,7 +192,7 @@ class EnvOmniGibson(EB.EnvBase):
                 pos_diff_xy = np.random.uniform(-pos_magnitude, pos_magnitude, size=2)
                 pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
                 pos += pos_diff
-                # TODO： without mobile motion， the target pose need to be very carefully selected
+                # TODO： without mobile motion, the target pose need to be very carefully selected
                 pos += th.from_numpy(np.array([-.15, 0.0, 0]))
                 orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
                 orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
