@@ -66,8 +66,9 @@ class EnvOmniGibson(EB.EnvBase):
         self._env_name = env_name
         self._init_kwargs = deepcopy(kwargs)
         self.add_distractor_objects = False
-        self.single_arm = True
+        self.single_arm = "left"
 
+        # breakpoint()
         # Setting the objects (breakfast table, teacup, coffee_cup) to be more in the centre
         # Setting some default joint positions of the robot  
         kwargs["objects"][0]["position"] = [0.5, 0.0, 0.7]
@@ -77,9 +78,14 @@ class EnvOmniGibson(EB.EnvBase):
         if kwargs["robots"][0]["type"] == "Tiago":
             kwargs["robots"][0]["reset_joint_pos"][10] = 0.0
             kwargs["robots"][0]["reset_joint_pos"][11] = 0.0
+        if kwargs["robots"][0]["type"] == "R1":
+            kwargs["robots"][0]["reset_joint_pos"][6:22] = [0.5, -1.0, -0.8, 0.0,     -0.141,      0.027,
+             2.248,      2.550,     -0.983,     -1.416,      0.227,     -0.072,
+             1.460,     -1.417,     -1.230,      1.214]
         # Explicity add the depth_linear and rgb modalities
         kwargs["robots"][0]["obs_modalities"].append("depth_linear")
         kwargs["robots"][0]["obs_modalities"].append("rgb")
+        kwargs["robots"][0]["obs_modalities"].append("seg_instance")
 
         if kwargs["robots"][0]["type"] == "R1":
             # Setting the camera height and width here because setting it later causes issues
@@ -94,8 +100,14 @@ class EnvOmniGibson(EB.EnvBase):
             og.clear()
 
         self.env = og.Environment(configs=kwargs)
+        
+        # Env parameters added by Arpit
         self.valid_env = True
         self.err = "None"
+        self.obj_visible_at_start_of_manip = False
+        self.IL_obs_keys = ["rgb", "depth_linear"]
+        self.sampled_base_poses = {"failure": list(), "success": list()}
+        
         # TODO: uncomment the following lines for data generation.
         controller_config = {
             "base": {"name": "HolonomicBaseJointController", "motor_type": "position", "command_input_limits": None, "use_impedances": False},
@@ -110,6 +122,7 @@ class EnvOmniGibson(EB.EnvBase):
         self.env.robots[0].reload_controllers(controller_config=controller_config)
         self.env.robots[0]._grasping_mode = "sticky"
         self.env.scene.update_initial_state()
+        self.robot = self.env.robots[0]
         self.robot_name = self.env.robots[0].name
 
         # # remove later
@@ -176,13 +189,15 @@ class EnvOmniGibson(EB.EnvBase):
         enable_head_tracking = False
         if kwargs["robots"][0]["type"] == "Tiago":
             enable_head_tracking = True
-        self.primitive = StarterSemanticActionPrimitives(self.env, self.env.robots[0], enable_head_tracking=enable_head_tracking, curobo_batch_size=10)
+        self.primitive = StarterSemanticActionPrimitives(self.env, self.env.robots[0], enable_head_tracking=enable_head_tracking, curobo_batch_size=10, arm_side=self.single_arm)
 
         # Create CuRobo instance
         self.cmg = self.primitive._motion_generator
 
         self.policy_rollout = False
         self.with_color = False
+
+        # breakpoint()
 
 
     def step(self, action, video_writer=None):
@@ -212,7 +227,7 @@ class EnvOmniGibson(EB.EnvBase):
         #         video_writer[env_idx].append_data(external_obs)
 
         # replace the observation with newly added IL obs function 
-        obs = self.get_obs_IL()
+        obs, obs_info = self.get_obs_IL()
         
         # return obs, r, done, info
         # changed to output with truncated
@@ -285,10 +300,32 @@ class EnvOmniGibson(EB.EnvBase):
         #         orn = T.mat2quat(T.euler2mat(th.tensor([0.0, 0.0, np.pi])) @ T.quat2mat(orn)) # add pi orientation along the y-axis
         #         obj.set_position_orientation(pos, orn)
 
-        # Sampling random object poses on table using OG API
-        for obj in objs:
-            if "table" not in obj.name:
-                obj.states[object_states.OnTop].set_value(other=self.env.scene.object_registry("name", "breakfast_table"), new_value=True)
+        # Randomize height of table
+        breakfast_table = self.env.scene.object_registry("name", "breakfast_table")
+        breakfast_table_current_scale = breakfast_table.scale
+        z_scale = np.random.uniform(0.8, 1.2)
+        print(f"z_scale: {z_scale}")
+        temp_state = og.sim.dump_state(serialized=False)
+        og.sim.stop()
+        breakfast_table.scale = th.tensor([breakfast_table_current_scale[0], breakfast_table_current_scale[1], 1.0 * z_scale])
+        og.sim.play()
+        og.sim.load_state(temp_state)
+        breakfast_table.keep_still()
+        for _ in range(10): og.sim.step()
+
+        # debugging
+        coffee_cup = self.env.scene.object_registry("name", "coffee_cup")
+        x_pos = np.random.uniform(0.67, 0.71)
+        y_pos = np.random.uniform(-0.5, 0.5)
+        current_coffee_cup_pos = coffee_cup.get_position()
+        coffee_cup.set_position_orientation(position=th.tensor([x_pos, y_pos, 0.9]))
+        
+        # # Sampling random object poses on table using OG API
+        # for obj in objs:
+        #     if "table" not in obj.name:
+        #         obj.states[object_states.OnTop].set_value(other=self.env.scene.object_registry("name", "breakfast_table"), new_value=True)
+
+        # breakpoint()
 
     def _randomize_object_pose_D3(self, objs):
         # # remove breakfast table from scene
@@ -351,7 +388,9 @@ class EnvOmniGibson(EB.EnvBase):
         if not self.policy_rollout:
             self.valid_env = True
             self.primitive.valid_env = True
+            self.primitive.err = "None"
             self.err = "None"
+            self.obj_visible_at_start_of_manip = False
 
         # Reset the robot to a specific position. Can remove this later
         self.env.robots[0].set_position_orientation(position=th.tensor([-1.0, 0.0, 0.0]))
@@ -422,7 +461,7 @@ class EnvOmniGibson(EB.EnvBase):
         for _ in range(20): og.sim.step()
         
         # change to the new observation
-        obs = self.get_obs_IL()
+        obs, obs_info = self.get_obs_IL()
         
         return obs
 
@@ -632,8 +671,12 @@ class EnvOmniGibson(EB.EnvBase):
         # obs_IL.update(obj_states)
 
         # temp_start_time = time.time()
-        other_obs = self.get_observation(di) # get default observations
-        obs_IL.update(other_obs)
+        other_obs, info = self.get_observation(di) # get default observations
+        # retain only the relevant obs keys for IL policy
+        for k in other_obs.keys():
+            if k.split("::")[-1] in self.IL_obs_keys:
+                obs_IL[k] = other_obs[k]
+        # obs_IL.update(other_obs)
         # obs_time = time.time() - temp_start_time 
 
         if self.policy_rollout:
@@ -660,14 +703,14 @@ class EnvOmniGibson(EB.EnvBase):
         # eef_state = {'eef_state': self.process_eef(robot_prop_states)}
         # obs_IL.update(eef_state)
 
-        return obs_IL
+        return obs_IL, info
 
     def get_observation(self, di=None):
         if di:
             return di
 
         obs, info = self.env.get_obs()
-        return obs
+        return obs, info
 
     def get_state(self):
         """
