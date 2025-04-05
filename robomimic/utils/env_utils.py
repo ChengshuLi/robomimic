@@ -399,3 +399,14 @@ def wrap_env_from_config(env, config):
         env = FrameStackWrapper(env, num_frames=config.train.frame_stack)
 
     return env
+
+def wrap_env_from_config_brs(env, config):
+    """
+    Wraps environment using the provided Config object to determine which wrappers
+    to use (if any).
+    """
+    num_frames_to_stack = config['module']['policy']['num_latest_obs']
+    if num_frames_to_stack > 1:
+        from robomimic.envs.wrappers import FrameStackWrapper
+        env = FrameStackWrapper(env, num_frames=num_frames_to_stack)
+    return env

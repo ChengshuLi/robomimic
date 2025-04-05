@@ -23,6 +23,7 @@ import torch as th
 import numpy as np
 import gym
 import time
+import copy
 
 
 from omnigibson.macros import gm
@@ -121,9 +122,9 @@ class EnvOmniGibson(EB.EnvBase):
                                       self.eef_current_marker_right, self.eef_goal_marker_right], [self.env.scene] * 4)
             og.sim.step()
 
-        self.primitive = StarterSemanticActionPrimitives(self.env, self.env.robots[0], enable_head_tracking=False, curobo_batch_size=1)
         # Create CuRobo instance
         if self._init_kwargs['init_curobo']:
+            self.primitive = StarterSemanticActionPrimitives(self.env, self.env.robots[0], enable_head_tracking=False, curobo_batch_size=1)
             self.cmg = self.primitive._motion_generator
 
         self.policy_rollout = False
@@ -188,7 +189,7 @@ class EnvOmniGibson(EB.EnvBase):
 
         return [self.env.task.object_scope[obj] for obj in obj_names]
 
-    def early_termination(self, env_step):
+    def early_termination(self, env_step, ob_dict=None):
         """
         Check if the episode should be terminated early.
         """
@@ -206,6 +207,47 @@ class EnvOmniGibson(EB.EnvBase):
             if 'table' in key: # if table is moved, directly terminate the episode 
                 if np.linalg.norm(self.initial_positions[key][0] - cur_positions[key][0]) > 0.1:
                     return True
+        
+        # early termination when the robot get stuck, NOT WORKING NOW
+        # if env_step == 0:
+        #     # note that the poses are in the robot frame
+        #     self.old_eef_left_pos = copy.deepcopy(ob_dict['eef_left_pos'])
+        #     self.old_eef_left_quat = copy.deepcopy(ob_dict['eef_left_quat'])
+        #     self.old_eef_right_pos = copy.deepcopy(ob_dict['eef_right_pos'])
+        #     self.old_eef_right_quat = copy.deepcopy(ob_dict['eef_right_quat'])
+        # # if the robot is stuck for n steps, early terminate the episode
+        # if env_step > 150 and env_step % 100 == 0:
+        #     print('env_step', env_step)
+        #     # update the robot eef position
+        #     cur_eef_left_pos = ob_dict['eef_left_pos']
+        #     cur_eef_left_quat = ob_dict['eef_left_quat']
+        #     cur_eef_right_pos = ob_dict['eef_right_pos']
+        #     cur_eef_right_quat = ob_dict['eef_right_quat']
+        #     left_eef_pos_diff = np.linalg.norm(self.old_eef_left_pos - cur_eef_left_pos) 
+        #     left_eef_pos_nomove = left_eef_pos_diff < 0.02 
+        #     left_eef_quat_diff = np.linalg.norm(self.old_eef_left_quat - cur_eef_left_quat)
+        #     left_eef_quat_nomove = left_eef_quat_diff < 0.012
+        #     right_eef_pos_diff = np.linalg.norm(self.old_eef_right_pos - cur_eef_right_pos) 
+        #     right_eef_pos_nomove = right_eef_pos_diff < 0.02 
+        #     right_eef_quat_diff = np.linalg.norm(self.old_eef_right_quat - cur_eef_right_quat)
+        #     right_eef_quat_nomove = right_eef_quat_diff < 0.012
+
+        #     self.old_eef_left_pos = copy.deepcopy(cur_eef_left_pos)
+        #     self.old_eef_left_quat = copy.deepcopy(cur_eef_left_quat)
+        #     self.old_eef_right_pos = copy.deepcopy(cur_eef_right_pos)
+        #     self.old_eef_right_quat = copy.deepcopy(cur_eef_right_quat)
+
+        #     if left_eef_pos_nomove and left_eef_quat_nomove and right_eef_pos_nomove and right_eef_quat_nomove:
+        #         print('enter no move breakpoint')
+        #         print('')
+        #         print('left_eef_pos_nomove', left_eef_pos_diff, left_eef_pos_nomove)
+        #         print('left_eef_quat_nomove', left_eef_quat_diff, left_eef_quat_nomove)
+        #         print('right_eef_pos_nomove', right_eef_pos_diff, right_eef_pos_nomove)
+        #         print('right_eef_quat_nomove', right_eef_quat_diff, right_eef_quat_nomove)
+        #         print('')
+        #         breakpoint()
+        #         # return True
+        #         return False
                 
         return False
 
@@ -213,7 +255,7 @@ class EnvOmniGibson(EB.EnvBase):
         """
         Set the object pose for the task relevant objects
         """
-        obj_poses = obj_poses['states']
+        if 'states' in obj_poses.keys(): obj_poses = obj_poses['states']
         if self.name.startswith("test_r1_cup"):
             task_relevant_objs = self._get_task_relevant_objs()
             for obj in task_relevant_objs:
@@ -453,7 +495,7 @@ class EnvOmniGibson(EB.EnvBase):
             state = og.sim.dump_state()
             og.sim.stop()
             target_friction = 2.0
-            gripper_mat = lazy.omni.isaac.core.materials.PhysicsMaterial(
+            gripper_mat = lazy.isaacsim.core.api.materials.physics_material.PhysicsMaterial(
                 prim_path=f"{self.env.robots[0].prim_path}/gripper_mat",
                 name="gripper_material",
                 static_friction=target_friction,
@@ -527,6 +569,10 @@ class EnvOmniGibson(EB.EnvBase):
             self.pcd_offset = np.array([ -4.116, 0.002,  -3.069])
             self.pcd_norm_range = np.array([0.9, 0.9, 0.9])
             self.clip_bbox_size = np.array([3, 1.5, 2])
+
+            # TODO: maybe reduce the pcd range can be helpful
+            # self.pcd_norm_range = np.array([1.0, 1.0, 1.0])
+            # self.clip_bbox_size = np.array([2.5, 1.5, 1.5])
             
             # change the viewport output to the viewer camera
             viewer_prim_path = og.sim.viewer_camera.prim_path
