@@ -10,6 +10,7 @@ import numpy as np
 from copy import deepcopy
 
 import omnigibson as og
+import omnigibson.lazy as lazy
 import robomimic.utils.obs_utils as ObsUtils
 import robomimic.envs.env_base as EB
 
@@ -32,7 +33,7 @@ from omnigibson.macros import gm
 gm.USE_GPU_DYNAMICS = False
 gm.ENABLE_FLATCACHE = False
 
-DEBUG = True
+DEBUG = False
 
 class EnvErrTypes(str, Enum):
     ArmMPFailed = "ArmMPFailed"
@@ -66,15 +67,17 @@ class EnvOmniGibson(EB.EnvBase):
         self._env_name = env_name
         self._init_kwargs = deepcopy(kwargs)
         self.add_distractor_objects = False
-        self.single_arm = "left"
+        self.single_arm = "right"
 
-        # breakpoint()
+        kwargs["scene"]["type"] = "Scene"
         # Setting the objects (breakfast table, teacup, coffee_cup) to be more in the centre
         # Setting some default joint positions of the robot  
-        kwargs["objects"][0]["position"] = [0.5, 0.0, 0.7]
-        kwargs["objects"][1]["position"] = [0.5, 0.3, 0.8]
-        kwargs["objects"][2]["position"] = [0.5, -0.2, 0.8]
-        kwargs["robots"][0]["reset_joint_pos"][0] = -1.0
+        kwargs["objects"][0]["position"] = [1.0, 0.0, 0.7]
+        kwargs["objects"][1]["position"] = [0.7, 0.3, 0.8]
+        kwargs["objects"][2]["position"] = [0.7, -0.2, 0.8]
+        kwargs["objects"][0]["scale"][0] = 1.5
+        kwargs["robots"][0]["reset_joint_pos"][0] = -0.5
+        # kwargs["robots"][0]["position"] = [-1.0, 0.0, 0.0]
         if kwargs["robots"][0]["type"] == "Tiago":
             kwargs["robots"][0]["reset_joint_pos"][10] = 0.0
             kwargs["robots"][0]["reset_joint_pos"][11] = 0.0
@@ -120,13 +123,15 @@ class EnvOmniGibson(EB.EnvBase):
         }
 
         self.env.robots[0].reload_controllers(controller_config=controller_config)
-        self.env.robots[0]._grasping_mode = "sticky"
+        # self.env.robots[0]._grasping_mode = "sticky"
         self.env.scene.update_initial_state()
         self.robot = self.env.robots[0]
         self.robot_name = self.env.robots[0].name
 
         # # remove later
         # breakpoint()
+
+        self.customize_physical_properties()
 
         # Debug visualization
         self.eef_current_marker = PrimitiveObject(
@@ -186,10 +191,10 @@ class EnvOmniGibson(EB.EnvBase):
                                       self.eef_current_marker_right, self.eef_goal_marker_right], [self.env.scene] * 4)
             og.sim.step()
 
-        enable_head_tracking = False
+        self.enable_head_tracking = False
         if kwargs["robots"][0]["type"] == "Tiago":
-            enable_head_tracking = True
-        self.primitive = StarterSemanticActionPrimitives(self.env, self.env.robots[0], enable_head_tracking=enable_head_tracking, curobo_batch_size=10, arm_side=self.single_arm)
+            self.enable_head_tracking = True
+        self.primitive = StarterSemanticActionPrimitives(self.env, self.env.robots[0], enable_head_tracking=self.enable_head_tracking, curobo_batch_size=10)
 
         # Create CuRobo instance
         self.cmg = self.primitive._motion_generator
@@ -248,6 +253,8 @@ class EnvOmniGibson(EB.EnvBase):
             return [self.env.scene.object_registry("name", name) for name in ["coffee_cup", "teacup", "breakfast_table"]]
         elif self.name.startswith("test_r1_cup"):
             return [self.env.scene.object_registry("name", name) for name in ["coffee_cup", "teacup", "breakfast_table"]]
+        elif self.name.startswith("r1_put_away_cup"):
+            return [self.env.scene.object_registry("name", name) for name in ["coffee_cup", "teacup", "breakfast_table"]]
         else:
             raise ValueError(f"Unknown environment name: {self.name}")
 
@@ -300,30 +307,30 @@ class EnvOmniGibson(EB.EnvBase):
         #         orn = T.mat2quat(T.euler2mat(th.tensor([0.0, 0.0, np.pi])) @ T.quat2mat(orn)) # add pi orientation along the y-axis
         #         obj.set_position_orientation(pos, orn)
 
-        # Randomize height of table
-        breakfast_table = self.env.scene.object_registry("name", "breakfast_table")
-        breakfast_table_current_scale = breakfast_table.scale
-        z_scale = np.random.uniform(0.8, 1.2)
-        print(f"z_scale: {z_scale}")
-        temp_state = og.sim.dump_state(serialized=False)
-        og.sim.stop()
-        breakfast_table.scale = th.tensor([breakfast_table_current_scale[0], breakfast_table_current_scale[1], 1.0 * z_scale])
-        og.sim.play()
-        og.sim.load_state(temp_state)
-        breakfast_table.keep_still()
-        for _ in range(10): og.sim.step()
+        # # Randomize height of table
+        # breakfast_table = self.env.scene.object_registry("name", "breakfast_table")
+        # breakfast_table_current_scale = breakfast_table.scale
+        # z_scale = np.random.uniform(0.8, 1.2)
+        # # print(f"z_scale: {z_scale}")
+        # temp_state = og.sim.dump_state(serialized=False)
+        # og.sim.stop()
+        # breakfast_table.scale = th.tensor([breakfast_table_current_scale[0], breakfast_table_current_scale[1], 1.0 * z_scale])
+        # og.sim.play()
+        # og.sim.load_state(temp_state)
+        # breakfast_table.keep_still()
+        # for _ in range(10): og.sim.step()
 
-        # debugging
-        coffee_cup = self.env.scene.object_registry("name", "coffee_cup")
-        x_pos = np.random.uniform(0.67, 0.71)
-        y_pos = np.random.uniform(-0.5, 0.5)
-        current_coffee_cup_pos = coffee_cup.get_position()
-        coffee_cup.set_position_orientation(position=th.tensor([x_pos, y_pos, 0.9]))
+        # # debugging
+        # coffee_cup = self.env.scene.object_registry("name", "coffee_cup")
+        # x_pos = np.random.uniform(0.67, 0.71)
+        # y_pos = np.random.uniform(-0.5, 0.5)
+        # current_coffee_cup_pos = coffee_cup.get_position()
+        # coffee_cup.set_position_orientation(position=th.tensor([x_pos, y_pos, 0.9]))
         
-        # # Sampling random object poses on table using OG API
-        # for obj in objs:
-        #     if "table" not in obj.name:
-        #         obj.states[object_states.OnTop].set_value(other=self.env.scene.object_registry("name", "breakfast_table"), new_value=True)
+        # Sampling random object poses on table using OG API
+        for obj in objs:
+            if "table" not in obj.name:
+                obj.states[object_states.OnTop].set_value(other=self.env.scene.object_registry("name", "breakfast_table"), new_value=True)
 
         # breakpoint()
 
@@ -387,13 +394,13 @@ class EnvOmniGibson(EB.EnvBase):
         obs, info = self.env.reset()
         if not self.policy_rollout:
             self.valid_env = True
-            self.primitive.valid_env = True
-            self.primitive.err = "None"
+            # self.primitive.valid_env = True
+            self.primitive.mp_err = "None"
             self.err = "None"
             self.obj_visible_at_start_of_manip = False
 
         # Reset the robot to a specific position. Can remove this later
-        self.env.robots[0].set_position_orientation(position=th.tensor([-1.0, 0.0, 0.0]))
+        self.env.robots[0].set_position_orientation(position=th.tensor([-0.5, 0.0, 0.0]))
 
         if self.add_distractor_objects:
             # Set chair poses
@@ -524,7 +531,24 @@ class EnvOmniGibson(EB.EnvBase):
             # video_writer.append_data(concatenated_img)
         
     def customize_physical_properties(self):
-        pass
+        # breakpoint()
+        # Increase gripper friction
+        state = og.sim.dump_state()
+        og.sim.stop()
+        target_friction = 2.0
+        gripper_mat = lazy.isaacsim.core.api.materials.physics_material.PhysicsMaterial(
+            prim_path=f"{self.env.robots[0].prim_path}/gripper_mat",
+            name="gripper_material",
+            static_friction=target_friction,
+            dynamic_friction=target_friction,
+            restitution=None,
+        )
+        for links in self.env.robots[0].finger_links.values():
+            for link in links:
+                for msh in link.collision_meshes.values():
+                    msh.apply_physics_material(gripper_mat)
+        og.sim.play()
+        og.sim.load_state(state)
         
     def sensor_setup(self):
         """
@@ -675,7 +699,11 @@ class EnvOmniGibson(EB.EnvBase):
         # retain only the relevant obs keys for IL policy
         for k in other_obs.keys():
             if k.split("::")[-1] in self.IL_obs_keys:
-                obs_IL[k] = other_obs[k]
+                if "seg" in k:
+                    obs_IL[k] = other_obs[k].cpu()
+                    breakpoint()
+                else:
+                    obs_IL[k] = other_obs[k]
         # obs_IL.update(other_obs)
         # obs_time = time.time() - temp_start_time 
 
@@ -738,11 +766,11 @@ class EnvOmniGibson(EB.EnvBase):
         coffee_cup_obj = self.env.scene.object_registry("name", "coffee_cup")
         success = teacup_obj.states[object_states.Inside].get_value(coffee_cup_obj)
         
-        # if teacup is grasped
-        success = teacup_obj.states[object_states.Touching].get_value(other=self.env.robots[0])
+        # # if teacup is grasped
+        # success = teacup_obj.states[object_states.Touching].get_value(other=self.env.robots[0])
 
-        # if coffee_cup is grasped
-        success = coffee_cup_obj.states[object_states.Touching].get_value(other=self.env.robots[0])
+        # # if coffee_cup is grasped
+        # success = coffee_cup_obj.states[object_states.Touching].get_value(other=self.env.robots[0])
 
         return {"task": success}
 
