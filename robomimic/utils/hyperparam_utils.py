@@ -106,6 +106,9 @@ class ConfigGenerator(object):
             if len(self.parameters[k].name) == 0:
                 # empty string indicates that naming should be skipped
                 continue
+            if len(self.parameters[k].name) == 0:
+                # empty string indicates that naming should be skipped
+                continue
             if parameter_value_names[k] is not None:
                 # take name from passed dictionary
                 val_str = parameter_value_names[k]
@@ -271,7 +274,7 @@ class ConfigGenerator(object):
                         value_name = maybe_parameter_names[k]
                     else:
                         value_name = setting[k]
-            
+
                     json_dict["meta"]["hp_keys"].append(key_name)
                     json_dict["meta"]["hp_values"].append(value_name)
 
@@ -294,7 +297,7 @@ class ConfigGenerator(object):
             for path in json_paths:
                 # write python command to file
                 cmd = "python train.py --config {}\n".format(path)
-                
+
                 print()
                 print(cmd)
                 f.write(cmd)

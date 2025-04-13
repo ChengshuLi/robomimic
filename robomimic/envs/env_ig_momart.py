@@ -336,10 +336,10 @@ class EnvGibsonMOMART(EB.EnvBase):
             camera_height,
             camera_width,
             reward_shaping,
-            render=None, 
-            render_offscreen=None, 
-            use_image_obs=None, 
-            use_depth_obs=None, 
+            render=None,
+            render_offscreen=None,
+            use_image_obs=None,
+            use_depth_obs=None,
             **kwargs,
     ):
         """
@@ -362,9 +362,9 @@ class EnvGibsonMOMART(EB.EnvBase):
         # note that @postprocess_visual_obs is False since this env's images will be written to a dataset
         return cls(
             env_name=env_name,
-            render=(False if render is None else render), 
-            render_offscreen=(has_camera if render_offscreen is None else render_offscreen), 
-            use_image_obs=(has_camera if use_image_obs is None else use_image_obs), 
+            render=(False if render is None else render),
+            render_offscreen=(has_camera if render_offscreen is None else render_offscreen),
+            use_image_obs=(has_camera if use_image_obs is None else use_image_obs),
             postprocess_visual_obs=False,
             image_height=camera_height,
             image_width=camera_width,

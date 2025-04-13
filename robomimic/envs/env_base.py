@@ -14,6 +14,8 @@ class EnvType:
     ROBOSUITE_TYPE = 1
     GYM_TYPE = 2
     IG_MOMART_TYPE = 3
+    REAL_TYPE = 6
+    GPRS_REAL_TYPE = 7
     OG_TYPE = 4
 
 
@@ -26,8 +28,8 @@ class EnvBase(abc.ABC):
         render=False, 
         render_offscreen=False, 
         use_image_obs=False, 
-        use_depth_obs=False, 
-        postprocess_visual_obs=True, 
+        use_depth_obs=False,
+        postprocess_visual_obs=True,
         **kwargs,
     ):
         """
@@ -190,15 +192,15 @@ class EnvBase(abc.ABC):
     @classmethod
     @abc.abstractmethod
     def create_for_data_processing(
-        cls, 
-        camera_names, 
-        camera_height, 
-        camera_width, 
-        reward_shaping, 
-        render=None, 
-        render_offscreen=None, 
-        use_image_obs=None, 
-        use_depth_obs=None, 
+        cls,
+        camera_names,
+        camera_height,
+        camera_width,
+        reward_shaping,
+        render=None,
+        render_offscreen=None,
+        use_image_obs=None,
+        use_depth_obs=None,
         **kwargs,
     ):
         """

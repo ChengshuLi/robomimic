@@ -37,7 +37,7 @@ Example usage:
     python dataset_states_to_obs.py --dataset /path/to/demo.hdf5 --output_name depth.hdf5 \
         --done_mode 2 --camera_names agentview robot0_eye_in_hand --camera_height 84 --camera_width 84 --depth
 
-    # (space saving option) extract 84x84 image observations with compression and without 
+    # (space saving option) extract 84x84 image observations with compression and without
     # extracting next obs (not needed for pure imitation learning algos)
     python dataset_states_to_obs.py --dataset /path/to/demo.hdf5 --output_name image.hdf5 \
         --done_mode 2 --camera_names agentview robot0_eye_in_hand --camera_height 84 --camera_width 84 \
@@ -67,8 +67,8 @@ def extract_trajectory(
     states, 
     actions,
     done_mode,
-    camera_names=None, 
-    camera_height=84, 
+    camera_names=None,
+    camera_height=84,
     camera_width=84,
 ):
     """
@@ -97,8 +97,8 @@ def extract_trajectory(
     if is_robosuite_env:
         camera_info = get_camera_info(
             env=env,
-            camera_names=camera_names, 
-            camera_height=camera_height, 
+            camera_names=camera_names,
+            camera_height=camera_height,
             camera_width=camera_width,
         )
 
@@ -166,8 +166,8 @@ def extract_trajectory(
 
 def get_camera_info(
     env,
-    camera_names=None, 
-    camera_height=84, 
+    camera_names=None,
+    camera_height=84,
     camera_width=84,
 ):
     """
@@ -263,8 +263,8 @@ def dataset_states_to_obs(args):
             states=states, 
             actions=actions,
             done_mode=args.done_mode,
-            camera_names=args.camera_names, 
-            camera_height=args.camera_height, 
+            camera_names=args.camera_names,
+            camera_height=args.camera_height,
             camera_width=args.camera_width,
         )
 
@@ -376,12 +376,12 @@ if __name__ == "__main__":
 
     # flag for including depth observations per camera
     parser.add_argument(
-        "--depth", 
+        "--depth",
         action='store_true',
         help="(optional) use depth observations for each camera",
     )
 
-    # specifies how the "done" signal is written. If "0", then the "done" signal is 1 wherever 
+    # specifies how the "done" signal is written. If "0", then the "done" signal is 1 wherever
     # the transition (s, a, s') has s' in a task completion state. If "1", the "done" signal 
     # is one at the end of every trajectory. If "2", the "done" signal is 1 at task completion
     # states for successful trajectories and 1 at the end of all trajectories.
@@ -409,14 +409,14 @@ if __name__ == "__main__":
 
     # flag to exclude next obs in dataset
     parser.add_argument(
-        "--exclude-next-obs", 
+        "--exclude-next-obs",
         action='store_true',
         help="(optional) exclude next obs in dataset",
     )
 
     # flag to compress observations with gzip option in hdf5
     parser.add_argument(
-        "--compress", 
+        "--compress",
         action='store_true',
         help="(optional) compress observations with gzip option in hdf5",
     )

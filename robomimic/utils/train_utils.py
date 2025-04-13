@@ -13,6 +13,11 @@ import imageio
 import numpy as np
 from copy import deepcopy
 from collections import OrderedDict
+import matplotlib.pyplot as plt  
+
+from omnigibson.object_states.contact_bodies import ContactBodies
+import omnigibson as og
+import time 
 
 import torch
 
@@ -20,8 +25,12 @@ import robomimic
 import robomimic.utils.tensor_utils as TensorUtils
 import robomimic.utils.log_utils as LogUtils
 import robomimic.utils.file_utils as FileUtils
+import robomimic.utils.obs_utils as ObsUtils
+import robomimic.utils.env_utils as EnvUtils
+import robomimic.macros as Macros
 
-from robomimic.utils.dataset import SequenceDataset
+
+from robomimic.utils.dataset import SequenceDataset, R2D2Dataset, MetaDataset
 from robomimic.envs.env_base import EnvBase
 from robomimic.envs.wrappers import EnvWrapper
 from robomimic.algo import RolloutPolicy
@@ -45,12 +54,17 @@ def get_exp_dir(config, auto_remove_exp_dir=False):
         video_dir (str): path to video directory (sub-folder in experiment directory)
             to store rollout videos
     """
+    assert not (Macros.USE_MAGLEV and Macros.USE_NGC)
+    if Macros.USE_MAGLEV or Macros.USE_NGC:
+        # remove existing experiment directory automatically if path exists so that we don't block on user input
+        auto_remove_exp_dir = True
+
     # timestamp for directory names
     t_now = time.time()
     time_str = datetime.datetime.fromtimestamp(t_now).strftime('%Y%m%d%H%M%S')
 
     # create directory for where to dump model parameters, tensorboard logs, and videos
-    base_output_dir = os.path.expanduser(config.train.output_dir)
+    base_output_dir = os.path.expandvars(os.path.expanduser(config.train.output_dir))
     if not os.path.isabs(base_output_dir):
         # relative paths are specified relative to robomimic module location
         base_output_dir = os.path.join(robomimic.__path__[0], base_output_dir)
@@ -77,7 +91,60 @@ def get_exp_dir(config, auto_remove_exp_dir=False):
     # video directory
     video_dir = os.path.join(base_output_dir, time_str, "videos")
     os.makedirs(video_dir)
+
+    # establish sync path for syncing important training results back
+    set_absolute_sync_path(
+        output_dir=config.train.output_dir,
+        exp_name=config.experiment.name,
+        time_str=time_str,
+    )
+
     return log_dir, output_dir, video_dir
+
+
+def set_absolute_sync_path(output_dir, exp_name, time_str=None):
+    """
+    Establish sync path for syncing important training results back and puts the path
+    into Macros.RESULTS_SYNC_PATH_ABS
+    """
+    need_sync_results = (Macros.USE_MAGLEV and (Macros.MAGLEV_SCRATCH_SYNC_PATH is not None)) or \
+        (Macros.USE_NGC and (Macros.NGC_SCRATCH_SYNC_PATH is not None)) or \
+        ((not Macros.USE_MAGLEV) and (not Macros.USE_NGC) and (Macros.RESULTS_SYNC_PATH is not None))
+    if need_sync_results:
+        # get path where we will sync results
+        assert Macros.RESULTS_SYNC_PATH_ABS is None
+        base_output_dir_name = os.path.basename(os.path.normpath(os.path.expandvars(os.path.expanduser(output_dir))))
+        
+        if Macros.USE_MAGLEV:
+            # turn relative scratch space path into absolute scratch space path
+            sync_prefix = os.path.join(
+                os.getenv("WORKFLOW_SCRATCH"),
+                "test_disk", # NOTE: most workflows mount scratch space under this prefix
+                Macros.MAGLEV_SCRATCH_SYNC_PATH,
+            )
+        elif Macros.USE_NGC:
+            sync_prefix = os.path.expandvars(os.path.expanduser(Macros.NGC_SCRATCH_SYNC_PATH))
+        else:
+            sync_prefix = os.path.expandvars(os.path.expanduser(Macros.RESULTS_SYNC_PATH))
+
+        # store at results_sync_path/output_dir_name/experiment_name/time_str
+        sync_path_without_time_dir = os.path.join(
+            sync_prefix,
+            base_output_dir_name,
+            exp_name,
+        )
+        if os.path.exists(sync_path_without_time_dir):
+            # only keep one time directory per exp name
+            shutil.rmtree(sync_path_without_time_dir)
+        Macros.RESULTS_SYNC_PATH_ABS = sync_path_without_time_dir
+        if time_str is not None:
+            Macros.RESULTS_SYNC_PATH_ABS = os.path.join(sync_path_without_time_dir, time_str)
+        os.makedirs(Macros.RESULTS_SYNC_PATH_ABS)
+    elif (Macros.USE_MAGLEV or Macros.USE_NGC):
+        LogUtils.log_warning(
+            "Using MagLev / NGC, but MAGLEV_SCRATCH_SYNC_PATH / NGC_SCRATCH_SYNC_PATH is unset in macros.py."
+            "No results will be synced back to scratch space."
+        )
 
 
 def load_data_for_training(config, obs_keys):
@@ -97,27 +164,35 @@ def load_data_for_training(config, obs_keys):
     # config can contain an attribute to filter on
     train_filter_by_attribute = config.train.hdf5_filter_key
     valid_filter_by_attribute = config.train.hdf5_validation_filter_key
-    if valid_filter_by_attribute is not None:
-        assert config.experiment.validate, "specified validation filter key {}, but config.experiment.validate is not set".format(valid_filter_by_attribute)
+    # TODO: the following does not seem to be useful, can be safely removed
+    # if valid_filter_by_attribute is not None:
+    #     assert config.experiment.validate, "specified validation filter key {}, but config.experiment.validate is not set".format(valid_filter_by_attribute)
 
     # load the dataset into memory
     if config.experiment.validate:
-        assert not config.train.hdf5_normalize_obs, "no support for observation normalization with validation data yet"
+        # assert not config.train.hdf5_normalize_obs, "no support for observation normalization with validation data yet"
         assert (train_filter_by_attribute is not None) and (valid_filter_by_attribute is not None), \
             "did not specify filter keys corresponding to train and valid split in dataset" \
             " - please fill config.train.hdf5_filter_key and config.train.hdf5_validation_filter_key"
+        dataset_path = config.train.data if isinstance(config.train.data, str) else config.train.data[0]["path"]
         train_demo_keys = FileUtils.get_demos_for_filter_key(
-            hdf5_path=os.path.expanduser(config.train.data),
+            hdf5_path=os.path.expanduser(dataset_path),
             filter_key=train_filter_by_attribute,
         )
         valid_demo_keys = FileUtils.get_demos_for_filter_key(
-            hdf5_path=os.path.expanduser(config.train.data),
+            hdf5_path=os.path.expanduser(dataset_path),
             filter_key=valid_filter_by_attribute,
         )
         assert set(train_demo_keys).isdisjoint(set(valid_demo_keys)), "training demonstrations overlap with " \
             "validation demonstrations!"
-        train_dataset = dataset_factory(config, obs_keys, filter_by_attribute=train_filter_by_attribute)
-        valid_dataset = dataset_factory(config, obs_keys, filter_by_attribute=valid_filter_by_attribute)
+        # breakpoint()
+        # calculate normalizations stats with both train and val set
+        all_dataset = dataset_factory(config, obs_keys)
+        obs_normalization_stats = all_dataset.obs_normalization_stats
+        action_normalization_stats = all_dataset.get_action_normalization_stats()
+        # change the trainset and valset to the same obs_normalization_stats and action_normalization_stats
+        train_dataset = dataset_factory(config, obs_keys, filter_by_attribute=train_filter_by_attribute, obs_normalization_stats=obs_normalization_stats, action_normalization_stats=action_normalization_stats)
+        valid_dataset = dataset_factory(config, obs_keys, filter_by_attribute=valid_filter_by_attribute, obs_normalization_stats=obs_normalization_stats, action_normalization_stats=action_normalization_stats)
     else:
         train_dataset = dataset_factory(config, obs_keys, filter_by_attribute=train_filter_by_attribute)
         valid_dataset = None
@@ -125,7 +200,7 @@ def load_data_for_training(config, obs_keys):
     return train_dataset, valid_dataset
 
 
-def dataset_factory(config, obs_keys, filter_by_attribute=None, dataset_path=None):
+def dataset_factory(config, obs_keys, filter_by_attribute=None, dataset_path=None, obs_normalization_stats=None, action_normalization_stats=None):
     """
     Create a SequenceDataset instance to pass to a torch DataLoader.
 
@@ -148,9 +223,11 @@ def dataset_factory(config, obs_keys, filter_by_attribute=None, dataset_path=Non
         dataset_path = config.train.data
 
     ds_kwargs = dict(
-        hdf5_path=dataset_path,
+        # hdf5_path=dataset_path,
         obs_keys=obs_keys,
+        action_keys=config.train.action_keys,
         dataset_keys=config.train.dataset_keys,
+        action_config=config.train.action_config,
         load_next_obs=config.train.hdf5_load_next_obs, # whether to load next observations (s') from dataset
         frame_stack=config.train.frame_stack,
         seq_length=config.train.seq_length,
@@ -161,11 +238,72 @@ def dataset_factory(config, obs_keys, filter_by_attribute=None, dataset_path=Non
         hdf5_cache_mode=config.train.hdf5_cache_mode,
         hdf5_use_swmr=config.train.hdf5_use_swmr,
         hdf5_normalize_obs=config.train.hdf5_normalize_obs,
-        filter_by_attribute=filter_by_attribute
+        obs_normalization_stats=obs_normalization_stats,
+        action_normalization_stats=action_normalization_stats,
+        # filter_by_attribute=filter_by_attribute
     )
-    dataset = SequenceDataset(**ds_kwargs)
+
+    if isinstance(dataset_path, str):
+        ds_kwargs["hdf5_path"] = [dataset_path]
+        ds_kwargs["filter_by_attribute"] = [filter_by_attribute]
+        ds_weights = [1.0]
+        ds_labels = ["dummy"]
+    else:
+        ds_kwargs["hdf5_path"] = [ds_cfg["path"] for ds_cfg in config.train.data]
+        ds_kwargs["filter_by_attribute"] = [filter_by_attribute for ds_cfg in config.train.data]
+        ds_weights = [ds_cfg.get("weight", 1.0) for ds_cfg in config.train.data]
+        ds_labels = [ds_cfg.get("label", "dummy") for ds_cfg in config.train.data]
+
+    meta_ds_kwargs = dict()
+
+    dataset = get_dataset(
+        ds_class=R2D2Dataset if config.train.data_format == "r2d2" else SequenceDataset,
+        ds_kwargs=ds_kwargs,
+        ds_weights=ds_weights,
+        ds_labels=ds_labels,
+        normalize_weights_by_ds_size=False,
+        meta_ds_class=MetaDataset,
+        meta_ds_kwargs=meta_ds_kwargs,
+    )
 
     return dataset
+
+
+def get_dataset(
+    ds_class,
+    ds_kwargs,
+    ds_weights,
+    ds_labels,
+    normalize_weights_by_ds_size,
+    meta_ds_class=MetaDataset,
+    meta_ds_kwargs=None,
+):
+    ds_list = []
+    for i in range(len(ds_weights)):
+        
+        ds_kwargs_copy = deepcopy(ds_kwargs)
+
+        keys = ["hdf5_path", "filter_by_attribute"]
+
+        for k in keys:
+            ds_kwargs_copy[k] = ds_kwargs[k][i]
+        
+        ds_list.append(ds_class(**ds_kwargs_copy))
+    
+    if len(ds_weights) == 1:
+        ds = ds_list[0]
+    else:
+        if meta_ds_kwargs is None:
+            meta_ds_kwargs = dict()
+        ds = meta_ds_class(
+            datasets=ds_list,
+            ds_weights=ds_weights,
+            ds_labels=ds_labels,
+            normalize_weights_by_ds_size=normalize_weights_by_ds_size,
+            **meta_ds_kwargs
+        )
+
+    return ds
 
 
 def run_rollout(
@@ -177,6 +315,9 @@ def run_rollout(
         video_writer=None,
         video_skip=5,
         terminate_on_success=False,
+        demo_actions=None,
+        check_action_plot=False,
+        init_states=None,
     ):
     """
     Runs a rollout in an environment with the current network parameters.
@@ -208,6 +349,40 @@ def run_rollout(
     policy.start_episode()
 
     ob_dict = env.reset()
+
+    if init_states is not None:
+        ob_dict = env.reset_to(init_states)
+        print('reset to init states done')
+        # breakpoint()
+        # print('coffee cup pose', ob_dict['object::coffee_cup'][0])
+        # print('dexie cup pose', ob_dict['object::dixie_cup'][0])
+        # breakpoint()
+    else:
+        # print('breakpoint in run_rollout to check contacts')
+        # breakpoint()
+        def check_reset_requirement():
+            need_to_reset = False
+            robot = env.env.env.robots[0]
+            contact_prim_set = robot.states[ContactBodies].get_value()
+            for prim in contact_prim_set:
+                print(prim.name, 'is in contact')
+            contact_name_list = [prim.name for prim in contact_prim_set]
+            for name in contact_name_list:
+                if 'coffee_cup' in name:
+                    need_to_reset = True
+                if 'paper_cup' in name:
+                    need_to_reset = True
+            return need_to_reset
+        
+        reset_max_times = 2
+
+        reset_count = 1
+        while check_reset_requirement() and reset_count < reset_max_times:
+            print('need to reset')
+            reset_count += 1
+            ob_dict = env.reset()
+
+
     goal_dict = None
     if use_goals:
         # retrieve goal from the environment
@@ -218,27 +393,136 @@ def run_rollout(
 
     total_reward = 0.
     success = { k: False for k in env.is_success() } # success metrics
+    got_exception = False
+
+    use_controller = False
 
     try:
+        ac_list = []
+        
+        if check_action_plot:
+            fig, ax = plt.subplots()
+            ax.plot(policy.action_normalization_stats['actions']['scale'].flatten(), label='action scale')
+            ax.plot(policy.action_normalization_stats['actions']['offset'].flatten(), label='action offset')
+            ax.legend()
+            plt.savefig('action_norm_stats.png')
+
+        average_step_time = 0
         for step_i in range(horizon):
+            # step_time = time.time()
+            # print("")
+            # print('step', step_i)
 
             # get action from policy
-            ac = policy(ob=ob_dict, goal=goal_dict)
+            per_step_policy_rollout_time = time.time()
+            # breakpoint()
+            ac_n, ac = policy(ob=ob_dict, goal=goal_dict)
+            # print('policy rollout time', time.time() - per_step_policy_rollout_time)
+
+            if check_action_plot:
+                
+                print('check whether should be in the check action plot stage')
+                breakpoint()
+
+                print("")
+                print('step', step_i)
+                print('ac', ac)
+                if step_i < demo_actions.shape[0]:
+                    ac_diff = demo_actions[step_i] - ac
+                    print('demo', demo_actions[step_i])
+                    print('diff', ac_diff)
+                print("")
+
+                ac_ref = None
+                ac_ref_n = None
+                if step_i < demo_actions.shape[0]:
+                    ac_ref = demo_actions[step_i]
+                    ac_dict = OrderedDict()
+                    for k in ['actions']:
+                        ac_dict[k] = ac_ref.reshape(1, -1)
+                    # normalize actions
+                    action_normalization_stats = policy.action_normalization_stats
+                    ac_dict = ObsUtils.normalize_dict(ac_dict, normalization_stats=action_normalization_stats)
+                    ac_ref_n = ac_dict['actions'].squeeze()
+
+                ac1_n, ac1 = policy(ob=ob_dict, goal=goal_dict)
+                ac2_n, ac2 = policy(ob=ob_dict, goal=goal_dict)
+                ac3_n, ac3 = policy(ob=ob_dict, goal=goal_dict)
+                                
+                fig, ax = plt.subplots()
+                ax.plot(ac, label='ac')
+                ax.plot(ac1, label='ac1')
+                ax.plot(ac2, label='ac2')
+                ax.plot(ac3, label='ac3')
+                if ac_ref is not None:
+                    ax.plot(ac_ref, label='ref', linewidth=2, marker='o')
+                ax.legend()
+                plt.savefig(f'ac_{step_i}.png')
+
+                fig, ax = plt.subplots()
+                ax.plot(ac_n, label='ac_n')
+                ax.plot(ac1_n, label='ac1_n')
+                ax.plot(ac2_n, label='ac2_n')
+                ax.plot(ac3_n, label='ac3_n')
+                if ac_ref_n is not None:
+                    ax.plot(ac_ref_n, label='ref after norm', linewidth=2, marker='o')
+                ax.legend()
+                plt.savefig(f'ac_n_{step_i}.png')
+
+                ax.set_ylim(-1, 1)
+                
+                ax.legend()
+                # plt.pause(0.5)
+                # plt.show()
+                # breakpoint()
+                # assert not np.allclose(ac1, ac), "policy is not deterministic"
+            
+            ac_list.append(ac)
+            
 
             # play action
-            ob_dict, r, done, _ = env.step(ac)
+            env_rollout_time = time.time()
+            # print("camera action: ", ac[4:6])
+            if use_controller:
+                ob_dict, r, done, truncated, info = env.step(ac)
+                # for _ in range(30): og.sim.step()
+            else:
+                r = 0.0
+                done = False
+                robot = env.env.env.robots[0]
+                # breakpoint()
+                # ac = ac.astype(np.float32)
+                qs = robot.action_to_q(ac.astype(np.float32))
+                robot.set_joint_positions(qs)
+                # print("camera action: ", ac[4:6], qs[robot.camera_control_idx])
+                for _ in range(2): og.sim.step()
+                ob_dict = env.get_obs(action=ac)
 
+            # print('env rollout time', time.time() - env_rollout_time)
+            if average_step_time == 0:
+                average_step_time = time.time() - per_step_policy_rollout_time
+            else:
+                average_step_time = average_step_time *step_i / (step_i + 1) + (time.time() - per_step_policy_rollout_time) / (step_i + 1)
+            # print('average step time', average_step_time)   
+            # print('frequencey', 1 / (time.time() - per_step_policy_rollout_time))
+
+
+
+            # render_time = time.time()
             # render to screen
             if render:
                 env.render(mode="human")
+            # print('time for render', time.time() - render_time)
 
             # compute reward
             total_reward += r
-
+            # start_success_time = time.time()
             cur_success_metrics = env.is_success()
             for k in success:
                 success[k] = success[k] or cur_success_metrics[k]
+            # print('check success time', time.time() - start_success_time)
 
+            # video_writer_time = time.time()
             # visualization
             if video_writer is not None:
                 if video_count % video_skip == 0:
@@ -246,22 +530,31 @@ def run_rollout(
                     video_writer.append_data(video_img)
 
                 video_count += 1
-
+            # print('time for video writer', time.time() - video_writer_time)
             # break if done
             if done or (terminate_on_success and success["task"]):
                 break
 
+            # print('step time', time.time() - step_time)
+
     except env.rollout_exceptions as e:
         print("WARNING: got rollout exception {}".format(e))
+        got_exception = True
 
+    breakpoint()
     results["Return"] = total_reward
     results["Horizon"] = step_i + 1
     results["Success_Rate"] = float(success["task"])
+    results["Exception_Rate"] = float(got_exception)
+    results["actions"] = ac_list
 
     # log additional success metrics
     for k in success:
         if k != "task":
             results["{}_Success_Rate".format(k)] = float(success[k])
+    
+    # TODO: add subtask infomation to results
+    # for example whether grasping objects is successful
 
     return results
 
@@ -279,6 +572,9 @@ def rollout_with_stats(
         video_skip=5,
         terminate_on_success=False,
         verbose=False,
+        demo_actions=None,
+        check_action_plot=False,
+        init_states_list=None,
     ):
     """
     A helper function used in the train loop to conduct evaluation rollouts per environment
@@ -354,7 +650,14 @@ def rollout_with_stats(
             iterator = LogUtils.custom_tqdm(iterator, total=num_episodes)
 
         num_success = 0
+        action_info = []
         for ep_i in iterator:
+            # if ep_i < 5:
+            #     continue
+            # breakpoint()
+            init_states = None
+            if init_states_list is not None:
+                init_states = init_states_list[ep_i]
             rollout_timestamp = time.time()
             rollout_info = run_rollout(
                 policy=policy,
@@ -365,13 +668,23 @@ def rollout_with_stats(
                 video_writer=env_video_writer,
                 video_skip=video_skip,
                 terminate_on_success=terminate_on_success,
-            )
+                demo_actions=demo_actions,
+                check_action_plot=check_action_plot,
+                init_states=init_states,
+            ) # 'Return', 'Horizon', 'Success_Rate', 'Exception_Rate', 'actions'
+            action_info.append(rollout_info["actions"])
             rollout_info["time"] = time.time() - rollout_timestamp
             rollout_logs.append(rollout_info)
             num_success += rollout_info["Success_Rate"]
             if verbose:
+                print("")
                 print("Episode {}, horizon={}, num_success={}".format(ep_i + 1, horizon, num_success))
-                print(json.dumps(rollout_info, sort_keys=True, indent=4))
+                print("time", rollout_info["time"])
+                print("")
+                # print(json.dumps(rollout_info, sort_keys=True, indent=4))
+            
+            # print('breakpoint in rollout_with_stats')
+            # breakpoint()
 
         if video_dir is not None:
             # close this env's video writer (next env has it's own)
@@ -379,7 +692,8 @@ def rollout_with_stats(
 
         # average metric across all episodes
         rollout_logs = dict((k, [rollout_logs[i][k] for i in range(len(rollout_logs))]) for k in rollout_logs[0])
-        rollout_logs_mean = dict((k, np.mean(v)) for k, v in rollout_logs.items())
+        # dict_keys(['Return', 'Horizon', 'Success_Rate', 'Exception_Rate', 'actions', 'time'])
+        rollout_logs_mean = dict((k, np.mean(v)) for k, v in rollout_logs.items() if k != "actions")
         rollout_logs_mean["Time_Episode"] = np.sum(rollout_logs["time"]) / 60. # total time taken for rollouts in minutes
         all_rollout_logs[env_name] = rollout_logs_mean
 
@@ -387,7 +701,7 @@ def rollout_with_stats(
         # close video writer that was used for all envs
         video_writer.close()
 
-    return all_rollout_logs, video_paths
+    return all_rollout_logs, video_paths, action_info
 
 
 def should_save_from_rollout_logs(
@@ -460,7 +774,7 @@ def should_save_from_rollout_logs(
     )
 
 
-def save_model(model, config, env_meta, shape_meta, ckpt_path, obs_normalization_stats=None):
+def save_model(model, config, env_meta, shape_meta, ckpt_path, obs_normalization_stats=None, action_normalization_stats=None):
     """
     Save model to a torch pth file.
 
@@ -479,6 +793,8 @@ def save_model(model, config, env_meta, shape_meta, ckpt_path, obs_normalization
             normalization. This should map observation keys to dicts
             with a "mean" and "std" of shape (1, ...) where ... is the default
             shape for the observation.
+
+        action_normalization_stats (dict): TODO
     """
     env_meta = deepcopy(env_meta)
     shape_meta = deepcopy(shape_meta)
@@ -493,11 +809,14 @@ def save_model(model, config, env_meta, shape_meta, ckpt_path, obs_normalization
         assert config.train.hdf5_normalize_obs
         obs_normalization_stats = deepcopy(obs_normalization_stats)
         params["obs_normalization_stats"] = TensorUtils.to_list(obs_normalization_stats)
+    if action_normalization_stats is not None:
+        action_normalization_stats = deepcopy(action_normalization_stats)
+        params["action_normalization_stats"] = TensorUtils.to_list(action_normalization_stats)
     torch.save(params, ckpt_path)
     print("save checkpoint to {}".format(ckpt_path))
 
 
-def run_epoch(model, data_loader, epoch, validate=False, num_steps=None, obs_normalization_stats=None):
+def run_epoch(model, data_loader, epoch, validate=False, num_steps=None, obs_normalization_stats=None, action_normalization_stats=None):
     """
     Run an epoch of training or validation.
 
@@ -550,13 +869,19 @@ def run_epoch(model, data_loader, epoch, validate=False, num_steps=None, obs_nor
 
         # process batch for training
         t = time.time()
+        # print('breakpoint before processing batch')
+        # breakpoint()
+        raw_actions = batch['raw_actions']
+
         input_batch = model.process_batch_for_training(batch)
         input_batch = model.postprocess_batch_for_training(input_batch, obs_normalization_stats=obs_normalization_stats)
         timing_stats["Process_Batch"].append(time.time() - t)
 
+        input_batch['raw_actions'] = raw_actions
+
         # forward and backward pass
         t = time.time()
-        info = model.train_on_batch(input_batch, epoch, validate=validate)
+        info = model.train_on_batch(input_batch, epoch, validate=validate, action_normalization_stats=action_normalization_stats)
         timing_stats["Train_Batch"].append(time.time() - t)
 
         # tensorboard logging
@@ -603,3 +928,72 @@ def is_every_n_steps(interval, current_step, skip_zero=False):
     if skip_zero and current_step == 0:
         return False
     return current_step % interval == 0
+
+
+def get_model_from_output_folder(models_path, videos_path=None, epoch=None, best=False, last=False):
+    """
+    Gets path to model (and video) for a certain epoch number (or the best or last epoch).
+
+    Args:
+        models_path (str): path to models folder (in output directory)
+        videos_path (str): path to videos folder (in output directory)
+        epoch (int): if provided, get model ckpt and video for this epoch
+        best (bool): if True, get the model and video for the best checkpoint (according to success rate)
+        last (bool): if True, get the model and video for the last checkpoint (according to epoch number)
+
+    Returns:
+        model_path (str): path to model pth
+        video_path (str): path to mp4
+        epoch (int): epoch number for retrieved model and video paths
+    """
+
+    # make sure we either grab a specific epoch, best epoch, or last epoch
+    assert sum([(epoch is not None), best, last]) == 1
+
+    # run through models to find the epoch we want
+    best_success_rate = -0.1
+    need_particular_epoch = (epoch is not None)
+    need_best_epoch = best
+    need_max_epoch = last
+
+    selected_epoch = -1
+    selected_model_path = None
+    for f in os.scandir(models_path):
+        model_epoch = int(f.name.split("_")[2].strip(".pth"))
+
+        if need_particular_epoch and (model_epoch == epoch):
+            selected_epoch = epoch
+            selected_model_path = os.path.join(models_path, f.name)
+
+        elif need_best_epoch: 
+            # this block assumes that the experiment run opted to save the model with the best checkpoint
+            if "success" in f.name:
+                # example name: model_epoch_250_NutAssemblySquareTarget_6_success_0.86.pth
+                # take last piece - "0.86.pth" -> "0.86" -> convert to float
+                success_rate = float(f.name.split("success_")[-1][:-4])
+                if success_rate > best_success_rate:
+                    best_success_rate = success_rate
+                    selected_epoch = model_epoch
+                    selected_model_path = os.path.join(models_path, f.name)
+
+        elif need_max_epoch:
+            # find last epoch
+            if model_epoch > selected_epoch:
+                selected_epoch = model_epoch
+                selected_model_path = os.path.join(models_path, f.name)
+
+    assert selected_epoch != -1
+    assert selected_model_path is not None
+
+    selected_video_path = None
+    if videos_path is not None:
+        # get random video filename
+        video_fname = None
+        for f in os.scandir(videos_path):
+            video_fname = f.name
+            break
+        # example video file name: NutAssemblySquareTarget_6_epoch_150.mp4
+        # take name skeleton and use it to infer name of source videos we want, then copy them
+        video_name_prefix = video_fname.split("epoch")[0]
+        selected_video_path = os.path.join(videos_path, "{}epoch_{}.mp4".format(video_name_prefix, selected_epoch))
+    return selected_model_path, selected_video_path, selected_epoch

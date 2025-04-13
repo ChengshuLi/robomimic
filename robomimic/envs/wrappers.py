@@ -113,6 +113,8 @@ class FrameStackWrapper(EnvWrapper):
         super(FrameStackWrapper, self).__init__(env=env)
         self.num_frames = num_frames
 
+        ### TODO: add action padding option + adding action to obs to include action history in obs ###
+
         # keep track of last @num_frames observations for each obs key
         self.obs_history = None
 
@@ -197,14 +199,14 @@ class FrameStackWrapper(EnvWrapper):
             done (bool): whether the task is done
             info (dict): extra information
         """
-        obs, r, done, info = self.env.step(action)
+        obs, r, done, _, info = self.env.step(action)
         self.update_obs(obs, action=action, reset=False)
         # update frame history
         for k in obs:
             # make sure to have leading dim of 1 for easy concatenation
             self.obs_history[k].append(obs[k][None])
         obs_ret = self._get_stacked_obs_from_history()
-        return obs_ret, r, done, info
+        return obs_ret, r, done, _, info
 
     def update_obs(self, obs, action=None, reset=False):
         obs["timesteps"] = np.array([self.timestep])
@@ -215,6 +217,18 @@ class FrameStackWrapper(EnvWrapper):
             self.timestep += 1
             obs["actions"] = action[: self.env.action_dimension]
 
+    
+    def get_obs(self, action):
+        obs = self.env.get_obs_IL()
+
+        self.update_obs(obs, action=action, reset=False)
+        # update frame history
+        for k in obs:
+            # make sure to have leading dim of 1 for easy concatenation
+            self.obs_history[k].append(obs[k][None])
+        obs_ret = self._get_stacked_obs_from_history()
+        return obs_ret
+    
     def _to_string(self):
         """Info to pretty print."""
         return "num_frames={}".format(self.num_frames)
