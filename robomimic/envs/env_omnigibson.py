@@ -34,11 +34,100 @@ gm.USE_GPU_DYNAMICS = False
 gm.ENABLE_FLATCACHE = False
 
 DEBUG = False
+RESOLUTION = (128, 128)
 
 class EnvErrTypes(str, Enum):
     ArmMPFailed = "ArmMPFailed"
     BaseMPFailed = "BaseMPFailed"
     BaseSamplingFailed = "BaseSamplingFailed"
+
+def load_empty_scene(kwargs, add_distractor_objects=False):
+    kwargs["scene"]["type"] = "Scene"
+    # Setting the objects (breakfast table, teacup, coffee_cup) to be more in the centre
+    # Setting some default joint positions of the robot  
+    kwargs["objects"][0]["position"] = [1.0, 0.0, 0.7]
+    kwargs["objects"][1]["position"] = [0.7, 0.3, 0.8]
+    kwargs["objects"][2]["position"] = [0.7, -0.2, 0.8]
+    kwargs["objects"][0]["scale"][0] = 1.5
+    kwargs["robots"][0]["reset_joint_pos"][0] = -0.5
+    # kwargs["robots"][0]["position"] = [-1.0, 0.0, 0.0]
+    if kwargs["robots"][0]["type"] == "Tiago":
+        kwargs["robots"][0]["reset_joint_pos"][10] = 0.0
+        kwargs["robots"][0]["reset_joint_pos"][11] = 0.0
+    if kwargs["robots"][0]["type"] == "R1":
+        kwargs["robots"][0]["reset_joint_pos"][6:22] = [0.5, -1.0, -0.8, 0.0,     -0.141,      0.027,
+            2.248,      2.550,     -0.983,     -1.416,      0.227,     -0.072,
+            1.460,     -1.417,     -1.230,      1.214]
+    # Explicity add the depth_linear and rgb modalities
+    kwargs["robots"][0]["obs_modalities"].append("depth_linear")
+    kwargs["robots"][0]["obs_modalities"].append("rgb")
+    kwargs["robots"][0]["obs_modalities"].append("seg_instance")
+
+    if kwargs["robots"][0]["type"] == "R1":
+        # Setting the camera height and width here because setting it later causes issues
+        kwargs["robots"][0]["sensor_config"]["VisionSensor"]["sensor_kwargs"]["image_height"] = RESOLUTION[0]
+        kwargs["robots"][0]["sensor_config"]["VisionSensor"]["sensor_kwargs"]["image_width"] = RESOLUTION[1]
+
+    if add_distractor_objects:
+        kwargs["scene"]["load_object_categories"].append("straight_chair")
+
+    return kwargs
+
+def load_house_single_floor(kwargs):
+    kwargs["scene"] = {
+        "type": "InteractiveTraversableScene",
+        "scene_model": "house_single_floor",
+        "load_room_instances": ["kitchen_0", "dining_room_0", "entryway_0", "living_room_0"],
+        "not_load_object_categories": ["taboret", "fridge"],
+    }
+    kwargs["robots"][0] = {
+        "type": "R1",
+        # "position": [9.0, 1.5,  1.0286],   # [5.2, -.8,  1.0286]
+        # "orientation": [    -0.0000,      0.0000,      0.8734,     -0.4870],
+        "name": "robot0",
+        "action_normalize": False,
+        "self_collisions": False,
+        "obs_modalities": ["rgb", "depth_linear", "seg_instance"],
+        # "default_reset_mode": "tuck",
+        "sensor_config": {
+            "VisionSensor": {
+                "sensor_kwargs": {
+                    "image_height": RESOLUTION[0],
+                    "image_width": RESOLUTION[1],
+                    "horizontal_aperture": 40.0,
+                },
+            },
+        },
+        "reset_joint_pos": [
+            0.0000,
+            0.0000,
+            0.000,
+            0.000,
+            0.000,
+            -0.0000, # 6 virtual base joint 
+            0.5,
+            -1.0,
+            -0.8,
+            -0.0000, # 4 torso joints
+            -0.000,
+            0.000,
+            1.8944,
+            1.8945,
+            -0.9848,
+            -0.9849,
+            1.5612,
+            1.5621,
+            0.9097,
+            0.9096,
+            -1.5544,
+            -1.5545,
+            0.0500,
+            0.0500,
+            0.0500,
+            0.0500,
+        ],
+    }
+
 
 def hori_concatenate_image(images):
     # Ensure the images have the same height
@@ -69,34 +158,7 @@ class EnvOmniGibson(EB.EnvBase):
         self.add_distractor_objects = False
         self.single_arm = "right"
 
-        kwargs["scene"]["type"] = "Scene"
-        # Setting the objects (breakfast table, teacup, coffee_cup) to be more in the centre
-        # Setting some default joint positions of the robot  
-        kwargs["objects"][0]["position"] = [1.0, 0.0, 0.7]
-        kwargs["objects"][1]["position"] = [0.7, 0.3, 0.8]
-        kwargs["objects"][2]["position"] = [0.7, -0.2, 0.8]
-        kwargs["objects"][0]["scale"][0] = 1.5
-        kwargs["robots"][0]["reset_joint_pos"][0] = -0.5
-        # kwargs["robots"][0]["position"] = [-1.0, 0.0, 0.0]
-        if kwargs["robots"][0]["type"] == "Tiago":
-            kwargs["robots"][0]["reset_joint_pos"][10] = 0.0
-            kwargs["robots"][0]["reset_joint_pos"][11] = 0.0
-        if kwargs["robots"][0]["type"] == "R1":
-            kwargs["robots"][0]["reset_joint_pos"][6:22] = [0.5, -1.0, -0.8, 0.0,     -0.141,      0.027,
-             2.248,      2.550,     -0.983,     -1.416,      0.227,     -0.072,
-             1.460,     -1.417,     -1.230,      1.214]
-        # Explicity add the depth_linear and rgb modalities
-        kwargs["robots"][0]["obs_modalities"].append("depth_linear")
-        kwargs["robots"][0]["obs_modalities"].append("rgb")
-        kwargs["robots"][0]["obs_modalities"].append("seg_instance")
-
-        if kwargs["robots"][0]["type"] == "R1":
-            # Setting the camera height and width here because setting it later causes issues
-            kwargs["robots"][0]["sensor_config"]["VisionSensor"]["sensor_kwargs"]["image_height"] = 128
-            kwargs["robots"][0]["sensor_config"]["VisionSensor"]["sensor_kwargs"]["image_width"] = 128
-
-        if self.add_distractor_objects:
-            kwargs["scene"]["load_object_categories"].append("straight_chair")
+        load_house_single_floor(kwargs)
 
         if og.sim is not None:
             og.sim.stop()
@@ -327,10 +389,28 @@ class EnvOmniGibson(EB.EnvBase):
         # current_coffee_cup_pos = coffee_cup.get_position()
         # coffee_cup.set_position_orientation(position=th.tensor([x_pos, y_pos, 0.9]))
         
-        # Sampling random object poses on table using OG API
+        # # Sampling random object poses on table using OG API
+        # for obj in objs:
+        #     if "table" not in obj.name:
+        #         obj.states[object_states.OnTop].set_value(other=self.env.scene.object_registry("name", "breakfast_table"), new_value=True)
+
+        # For house_single_floor scene
+        bar = self.env.scene.object_registry("name", "bar_udatjt_0")
         for obj in objs:
             if "table" not in obj.name:
-                obj.states[object_states.OnTop].set_value(other=self.env.scene.object_registry("name", "breakfast_table"), new_value=True)
+                obj.states[object_states.OnTop].set_value(other=bar, new_value=True)
+
+        bar_current_scale = bar.scale
+        z_scale = 0.7
+        # z_scale = np.random.uniform(0.8, 1.2)
+        temp_state = og.sim.dump_state(serialized=False)
+        og.sim.stop()
+        bar.scale = th.tensor([bar_current_scale[0], bar_current_scale[1], 1.0 * z_scale])
+        og.sim.play()
+        og.sim.load_state(temp_state)
+        bar.keep_still()
+        bar.set_position_orientation(position=th.tensor([7.287, 0.189, 0.40]))
+        for _ in range(10): og.sim.step()
 
         # breakpoint()
 
@@ -399,8 +479,42 @@ class EnvOmniGibson(EB.EnvBase):
             self.err = "None"
             self.obj_visible_at_start_of_manip = False
 
-        # Reset the robot to a specific position. Can remove this later
-        self.env.robots[0].set_position_orientation(position=th.tensor([-0.5, 0.0, 0.0]))
+        # # Reset the robot to a specific position. Can remove this later
+        # self.env.robots[0].set_position_orientation(position=th.tensor([-0.5, 0.0, 0.0]))
+
+        # stack cup task in house_single_floor scene
+        self.robot.set_position_orientation(position=th.tensor([9.0, 1.5,  1.0286]), orientation=th.tensor([-0.0000, 0.0000, 0.8734, -0.4870]))
+        self.robot.set_joint_positions(th.tensor([-0.3681,  1.2081, -0.2686,  1.5397,  0.9159, -1.5726]), indices=self.robot.arm_control_idx["left"])
+        self.robot.set_joint_positions( th.tensor([0.3681,  1.2081, -0.2686,  1.5397,  0.9159, -1.5726]), indices=self.robot.arm_control_idx["right"])
+        self.robot.reset_joint_pos = th.tensor([
+                        0.0000,
+                        0.0000,
+                        0.000,
+                        0.000,
+                        0.000,
+                        -0.0000, # 6 virtual base joint 
+                        0.5,
+                        -1.0,
+                        -0.8,
+                        -0.0000, # 4 torso joints
+                        -0.3681,
+                        0.3681,
+                        1.2081,
+                        1.2081,
+                        -0.2686,
+                        -0.2686,
+                        1.5397,
+                        1.5397,
+                        0.9159,
+                        0.9159,
+                        -1.5726,
+                        -1.5726,
+                        0.0500,
+                        0.0500,
+                        0.0500,
+                        0.0500,
+                    ],)
+
 
         if self.add_distractor_objects:
             # Set chair poses
@@ -465,7 +579,7 @@ class EnvOmniGibson(EB.EnvBase):
             orientation=th.tensor([-0.3543,  0.3566,  0.6132, -0.6093]),
         )
         
-        for _ in range(20): og.sim.step()
+        for _ in range(50): og.sim.step()
         
         # change to the new observation
         obs, obs_info = self.get_obs_IL()
@@ -535,7 +649,7 @@ class EnvOmniGibson(EB.EnvBase):
         # Increase gripper friction
         state = og.sim.dump_state()
         og.sim.stop()
-        target_friction = 2.0
+        target_friction = 4.0
         gripper_mat = lazy.isaacsim.core.api.materials.physics_material.PhysicsMaterial(
             prim_path=f"{self.env.robots[0].prim_path}/gripper_mat",
             name="gripper_material",
