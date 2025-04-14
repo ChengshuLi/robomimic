@@ -34,7 +34,7 @@ gm.USE_GPU_DYNAMICS = False
 gm.ENABLE_FLATCACHE = False
 
 DEBUG = False
-RESOLUTION = (128, 128)
+RESOLUTION = (256, 256)
 
 class EnvErrTypes(str, Enum):
     ArmMPFailed = "ArmMPFailed"
@@ -394,12 +394,7 @@ class EnvOmniGibson(EB.EnvBase):
         #     if "table" not in obj.name:
         #         obj.states[object_states.OnTop].set_value(other=self.env.scene.object_registry("name", "breakfast_table"), new_value=True)
 
-        # For house_single_floor scene
         bar = self.env.scene.object_registry("name", "bar_udatjt_0")
-        for obj in objs:
-            if "table" not in obj.name:
-                obj.states[object_states.OnTop].set_value(other=bar, new_value=True)
-
         bar_current_scale = bar.scale
         z_scale = 0.7
         # z_scale = np.random.uniform(0.8, 1.2)
@@ -411,6 +406,15 @@ class EnvOmniGibson(EB.EnvBase):
         bar.keep_still()
         bar.set_position_orientation(position=th.tensor([7.287, 0.189, 0.40]))
         for _ in range(10): og.sim.step()
+
+        # For house_single_floor scene
+        for obj in objs:
+            if "table" not in obj.name:
+                obj.states[object_states.OnTop].set_value(other=bar, new_value=True)
+
+        # teacup = self.env.scene.object_registry("name", "teacup")
+        # x_range = np.random.uniform(-0.2, 0.2)
+        # teacup.set_position_orientation(position=th.tensor([ 6.700 + x_range, 0.024,  0.739]), orientation=th.tensor([    -0.000,      0.000,      0.858,      0.514]))
 
         # breakpoint()
 
@@ -483,7 +487,7 @@ class EnvOmniGibson(EB.EnvBase):
         # self.env.robots[0].set_position_orientation(position=th.tensor([-0.5, 0.0, 0.0]))
 
         # stack cup task in house_single_floor scene
-        self.robot.set_position_orientation(position=th.tensor([9.0, 1.5,  1.0286]), orientation=th.tensor([-0.0000, 0.0000, 0.8734, -0.4870]))
+        self.robot.set_position_orientation(position=th.tensor([9.0, 1.5,  0.2]), orientation=th.tensor([-0.0000, 0.0000, 0.8734, -0.4870]))
         self.robot.set_joint_positions(th.tensor([-0.3681,  1.2081, -0.2686,  1.5397,  0.9159, -1.5726]), indices=self.robot.arm_control_idx["left"])
         self.robot.set_joint_positions( th.tensor([0.3681,  1.2081, -0.2686,  1.5397,  0.9159, -1.5726]), indices=self.robot.arm_control_idx["right"])
         self.robot.reset_joint_pos = th.tensor([
