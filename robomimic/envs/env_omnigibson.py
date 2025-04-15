@@ -264,6 +264,8 @@ class EnvOmniGibson(EB.EnvBase):
         self.policy_rollout = False
         self.with_color = False
 
+        self.global_env_step = 0
+
         # breakpoint()
 
 
@@ -476,6 +478,7 @@ class EnvOmniGibson(EB.EnvBase):
             observation (dict): initial observation dictionary.
         """
         obs, info = self.env.reset()
+        self.global_env_step = 0
         if not self.policy_rollout:
             self.valid_env = True
             # self.primitive.valid_env = True
