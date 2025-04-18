@@ -34,14 +34,63 @@ gm.USE_GPU_DYNAMICS = False
 gm.ENABLE_FLATCACHE = False
 
 DEBUG = False
-RESOLUTION = (256, 256)
 
 class EnvErrTypes(str, Enum):
     ArmMPFailed = "ArmMPFailed"
     BaseMPFailed = "BaseMPFailed"
     BaseSamplingFailed = "BaseSamplingFailed"
 
+def update_kwargs(kwargs):
+    # RESOLUTION = (128, 450)
+    RESOLUTION = (128, 128)
+
+    # Explicity add the depth_linear and rgb modalities
+    kwargs["robots"][0]["obs_modalities"].append("depth_linear")
+    kwargs["robots"][0]["obs_modalities"].append("rgb")
+    kwargs["robots"][0]["obs_modalities"].append("seg_instance")
+    
+    # Setting the camera height and width here because setting it later causes issues
+    kwargs["robots"][0]["sensor_config"]["VisionSensor"]["sensor_kwargs"]["image_height"] = RESOLUTION[0]
+    kwargs["robots"][0]["sensor_config"]["VisionSensor"]["sensor_kwargs"]["image_width"] = RESOLUTION[1]
+    kwargs["robots"][0]["sensor_config"]["VisionSensor"]["sensor_kwargs"]["horizontal_aperture"] = 25.0
+
+    kwargs["robots"][0]["reset_joint_pos"] = [
+            0.0000,
+            0.0000,
+            0.000,
+            0.000,
+            0.000,
+            -0.0000, # 6 virtual base joint 
+            0.5,
+            -1.0,
+            -0.8,
+            -0.0000, # 4 torso joints
+            -0.000,
+            0.000,
+            1.8944,
+            1.8945,
+            -0.9848,
+            -0.9849,
+            1.5612,
+            1.5621,
+            0.9097,
+            0.9096,
+            -1.5544,
+            -1.5545,
+            0.0500,
+            0.0500,
+            0.0500,
+            0.0500,
+        ]
+
+    # Always spawn robot at the origin with no rotation (this is to be compatible with curobo)
+    kwargs["robots"][0]["position"] = [0.0, 0.0, 0.0]
+    kwargs["robots"][0]["orientation"] = [0.0, 0.0, 0.0, 1.0]
+
 def load_empty_scene(kwargs, add_distractor_objects=False):
+    # RESOLUTION = (376, 1344)
+    RESOLUTION = (128, 128)
+
     kwargs["scene"]["type"] = "Scene"
     # Setting the objects (breakfast table, teacup, coffee_cup) to be more in the centre
     # Setting some default joint positions of the robot  
@@ -67,6 +116,7 @@ def load_empty_scene(kwargs, add_distractor_objects=False):
         # Setting the camera height and width here because setting it later causes issues
         kwargs["robots"][0]["sensor_config"]["VisionSensor"]["sensor_kwargs"]["image_height"] = RESOLUTION[0]
         kwargs["robots"][0]["sensor_config"]["VisionSensor"]["sensor_kwargs"]["image_width"] = RESOLUTION[1]
+        kwargs["robots"][0]["sensor_config"]["VisionSensor"]["sensor_kwargs"]["horizontal_aperture"] = 40.0
 
     if add_distractor_objects:
         kwargs["scene"]["load_object_categories"].append("straight_chair")
@@ -74,12 +124,13 @@ def load_empty_scene(kwargs, add_distractor_objects=False):
     return kwargs
 
 def load_house_single_floor(kwargs):
-    kwargs["scene"] = {
-        "type": "InteractiveTraversableScene",
-        "scene_model": "house_single_floor",
-        "load_room_instances": ["kitchen_0", "dining_room_0", "entryway_0", "living_room_0"],
-        "not_load_object_categories": ["taboret", "fridge"],
-    }
+    RESOLUTION = (256, 256)
+    # kwargs["scene"] = {
+    #     "type": "InteractiveTraversableScene",
+    #     "scene_model": "house_single_floor",
+    #     "load_room_instances": ["kitchen_0", "dining_room_0", "entryway_0", "living_room_0"],
+    #     "not_load_object_categories": ["taboret", "fridge"],
+    # }
     kwargs["robots"][0] = {
         "type": "R1",
         # "position": [9.0, 1.5,  1.0286],   # [5.2, -.8,  1.0286]
@@ -127,6 +178,17 @@ def load_house_single_floor(kwargs):
             0.0500,
         ],
     }
+    # # remove later
+    # kwargs["objects"] = [
+    #     DatasetObject(
+    #         name="teacup_601",
+    #         category="teacup",
+    #         model="kccqwj",
+    #         position=th.tensor([ 6.1515, -0.0625,  1.0921]),
+    #         orientation=th.tensor([-1.3313e-06, -6.6665e-07, -6.6280e-01,  7.4880e-01])
+    #     )
+    # ]
+
 
 
 def hori_concatenate_image(images):
@@ -158,7 +220,10 @@ class EnvOmniGibson(EB.EnvBase):
         self.add_distractor_objects = False
         self.single_arm = "right"
 
-        load_house_single_floor(kwargs)
+        breakpoint()
+        update_kwargs(kwargs)
+        # load_house_single_floor(kwargs)
+        # load_empty_scene(kwargs)
 
         if og.sim is not None:
             og.sim.stop()
@@ -189,9 +254,6 @@ class EnvOmniGibson(EB.EnvBase):
         self.env.scene.update_initial_state()
         self.robot = self.env.robots[0]
         self.robot_name = self.env.robots[0].name
-
-        # # remove later
-        # breakpoint()
 
         self.customize_physical_properties()
 
@@ -254,8 +316,6 @@ class EnvOmniGibson(EB.EnvBase):
             og.sim.step()
 
         self.enable_head_tracking = False
-        if kwargs["robots"][0]["type"] == "Tiago":
-            self.enable_head_tracking = True
         self.primitive = StarterSemanticActionPrimitives(self.env, self.env.robots[0], enable_head_tracking=self.enable_head_tracking, curobo_batch_size=10)
 
         # Create CuRobo instance
@@ -266,7 +326,19 @@ class EnvOmniGibson(EB.EnvBase):
 
         self.global_env_step = 0
 
-        # breakpoint()
+        # This is done only for the r1_pick_cup task
+        if "r1_pick_cup" in env_name:
+            floor = self.env.scene.object_registry("name", "floors_ptwlei_0")
+            # floor2 = self.env.scene.object_registry("name", "floors_ifmioj_0")
+            breakfast_table = self.env.scene.object_registry("name", "breakfast_table_6")
+            temp_state = og.sim.dump_state(serialized=False)
+            og.sim.stop()
+            floor.scale = th.tensor([1.8, 1.0, 1.0])
+            # floor2.scale = th.tensor([1.8, 1.0, 1.0])
+            breakfast_table.scale = th.tensor([1.668, 1.038, 0.994])
+            og.sim.play()
+            og.sim.load_state(temp_state)
+            for _ in range(10): og.sim.step()
 
 
     def step(self, action, video_writer=None):
@@ -319,6 +391,10 @@ class EnvOmniGibson(EB.EnvBase):
             return [self.env.scene.object_registry("name", name) for name in ["coffee_cup", "teacup", "breakfast_table"]]
         elif self.name.startswith("r1_put_away_cup"):
             return [self.env.scene.object_registry("name", name) for name in ["coffee_cup", "teacup", "breakfast_table"]]
+        elif self.name.startswith("r1_tidy_table"):
+            return [self.env.scene.object_registry("name", name) for name in ["teacup_601", "drop_in_sink_awvzkn_0"]]
+        elif self.name.startswith("r1_pick_cup"):
+            return [self.env.scene.object_registry("name", name) for name in ["coffee_cup_7", "breakfast_table_6"]]
         else:
             raise ValueError(f"Unknown environment name: {self.name}")
 
@@ -326,7 +402,7 @@ class EnvOmniGibson(EB.EnvBase):
 
     # TODO: make it more generalizable
     # randomize the pose of all the task relevant objects in xy-pos and z-rot
-    def _randomize_object_pose(self, objs):
+    def _randomize_object_pose_D0(self, objs):
 
         # Sampling random object poses on table using custom thresholds
         pos_magnitude = [-0.1, 0.1] 
@@ -418,56 +494,6 @@ class EnvOmniGibson(EB.EnvBase):
         # x_range = np.random.uniform(-0.2, 0.2)
         # teacup.set_position_orientation(position=th.tensor([ 6.700 + x_range, 0.024,  0.739]), orientation=th.tensor([    -0.000,      0.000,      0.858,      0.514]))
 
-        # breakpoint()
-
-    def _randomize_object_pose_D3(self, objs):
-        # # remove breakfast table from scene
-        # breakfast_table = self.env.scene.object_registry("name", "breakfast_table")
-        # self.env.scene.remove_object(breakfast_table)
-        # coffee_cup = self.env.scene.object_registry("name", "coffee_cup")
-        # teacup = self.env.scene.object_registry("name", "teacup")
-        # coffee_cup.set_position_orientation(position=th.tensor([0.0, 1.3, 0.4]))
-        # teacup.set_position_orientation(position=th.tensor([0.0, 1.2, 0.4]))
-        # for _ in range(10): og.sim.step()
-
-        # # add new receptacle object
-        # rot_euler = [0.0, 0.0, 180.0]
-        # rot_quat = th.tensor(R.from_euler('xyz', rot_euler, degrees=True).as_quat())
-        # obj = DatasetObject(
-        #     name= "breakfast_table",
-        #     category="commercial_kitchen_sink",
-        #     model="nmxgbm",
-        #     position=th.tensor([0.5, 0.0, 0.7]),
-        #     scale=th.tensor([1.0, 1.0, 0.5]),
-        #     orientation=rot_quat
-        # )
-        # self.env.scene.add_object(obj)
-        # for _ in range(10): og.sim.step()
-        # obj.set_position_orientation(orientation=rot_quat)
-
-        for _ in range(10): og.sim.step()
-
-        # receptacle = self.env.scene.object_registry("name", "breakfast_table")
-        # # receptacle.root_link.mass = 1e3
-        # # for link_number in range(1, 5):
-        # #     receptacle.links[f"link_{link_number}"].mass = 100.0
-        # receptacle.keep_still()
-        # # for joint_number in range(1, 5):
-        # #     receptacle.joints[f"link_{link_number}"].mass = 100.0
-        # # if need to set joint friction: receptacle.links["link_5"].friction
-        # # receptacle_joint_pos = np.random.uniform(0.1, 0.6)
-        # receptacle_joint_pos = 0.6
-        # receptacle.joints["j_link_0"].set_pos(receptacle_joint_pos, normalized=True)
-
-        # Sampling random object poses on table using OG API
-        for obj in objs:
-            if "teacup" in obj.name:
-                obj.states[object_states.OnTop].set_value(other=self.env.scene.object_registry("name", "breakfast_table"), new_value=True)
-
-        for _ in range(10): og.sim.step()
-
-        # breakpoint()
-
 
     # TODO: make it more generalizable
     def reset(self):
@@ -486,41 +512,43 @@ class EnvOmniGibson(EB.EnvBase):
             self.err = "None"
             self.obj_visible_at_start_of_manip = False
 
-        # # Reset the robot to a specific position. Can remove this later
+        # # Reset the robot to a specific position. TODO: Make this general
         # self.env.robots[0].set_position_orientation(position=th.tensor([-0.5, 0.0, 0.0]))
+        self.env.robots[0].set_position_orientation(position=th.tensor([-0.863, -0.26, 0]))
 
-        # stack cup task in house_single_floor scene
-        self.robot.set_position_orientation(position=th.tensor([9.0, 1.5,  0.2]), orientation=th.tensor([-0.0000, 0.0000, 0.8734, -0.4870]))
-        self.robot.set_joint_positions(th.tensor([-0.3681,  1.2081, -0.2686,  1.5397,  0.9159, -1.5726]), indices=self.robot.arm_control_idx["left"])
-        self.robot.set_joint_positions( th.tensor([0.3681,  1.2081, -0.2686,  1.5397,  0.9159, -1.5726]), indices=self.robot.arm_control_idx["right"])
-        self.robot.reset_joint_pos = th.tensor([
-                        0.0000,
-                        0.0000,
-                        0.000,
-                        0.000,
-                        0.000,
-                        -0.0000, # 6 virtual base joint 
-                        0.5,
-                        -1.0,
-                        -0.8,
-                        -0.0000, # 4 torso joints
-                        -0.3681,
-                        0.3681,
-                        1.2081,
-                        1.2081,
-                        -0.2686,
-                        -0.2686,
-                        1.5397,
-                        1.5397,
-                        0.9159,
-                        0.9159,
-                        -1.5726,
-                        -1.5726,
-                        0.0500,
-                        0.0500,
-                        0.0500,
-                        0.0500,
-                    ],)
+
+        # # stack cup task in house_single_floor scene
+        # self.robot.set_position_orientation(position=th.tensor([9.0, 1.5,  0.2]), orientation=th.tensor([-0.0000, 0.0000, 0.8734, -0.4870]))
+        # self.robot.set_joint_positions(th.tensor([-0.3681,  1.2081, -0.2686,  1.5397,  0.9159, -1.5726]), indices=self.robot.arm_control_idx["left"])
+        # self.robot.set_joint_positions( th.tensor([0.3681,  1.2081, -0.2686,  1.5397,  0.9159, -1.5726]), indices=self.robot.arm_control_idx["right"])
+        # self.robot.reset_joint_pos = th.tensor([
+        #                 0.0000,
+        #                 0.0000,
+        #                 0.000,
+        #                 0.000,
+        #                 0.000,
+        #                 -0.0000, # 6 virtual base joint 
+        #                 0.5,
+        #                 -1.0,
+        #                 -0.8,
+        #                 -0.0000, # 4 torso joints
+        #                 -0.3681,
+        #                 0.3681,
+        #                 1.2081,
+        #                 1.2081,
+        #                 -0.2686,
+        #                 -0.2686,
+        #                 1.5397,
+        #                 1.5397,
+        #                 0.9159,
+        #                 0.9159,
+        #                 -1.5726,
+        #                 -1.5726,
+        #                 0.0500,
+        #                 0.0500,
+        #                 0.0500,
+        #                 0.0500,
+        #             ],)
 
 
         if self.add_distractor_objects:
@@ -537,14 +565,10 @@ class EnvOmniGibson(EB.EnvBase):
             chair_4.set_position_orientation(position=th.tensor([-1.2552,  2.3325,  0.4930]))
             for _ in range(20): og.sim.step()
 
-        # D0 is the original distribution (no randomization at all - deterministic reset)
+        # D0 is the distribution with randomization in xy-pos and z-rot
         if self.name.endswith("D0"):
-            pass
-
-        # D1 is the distribution with randomization in xy-pos and z-rot
-        elif self.name.endswith("D1"):
             task_relevant_objs = self._get_task_relevant_objs()
-            self._randomize_object_pose(task_relevant_objs)
+            self._randomize_object_pose_D0(task_relevant_objs)
 
             # Step one time to update the scene and render a few times as well
             og.sim.step()
@@ -553,8 +577,9 @@ class EnvOmniGibson(EB.EnvBase):
 
             # Update the observation
             obs, info = self.env.get_obs()
-        
-        elif self.name.endswith("D2"):
+
+        # D1 is randomization all over the furniture
+        elif self.name.endswith("D1"):
             # # for arm role change
             task_relevant_objs = self._get_task_relevant_objs()
             self._randomize_object_pose_D2(task_relevant_objs)
@@ -566,18 +591,10 @@ class EnvOmniGibson(EB.EnvBase):
 
             # Update the observation
             obs, info = self.env.get_obs()
-        elif self.name.endswith("D3"):
-            # # for arm role change
-            task_relevant_objs = self._get_task_relevant_objs()
-            self._randomize_object_pose_D3(task_relevant_objs)
-
-            # Step one time to update the scene and render a few times as well
-            og.sim.step()
-            for _ in range(5):
-                og.sim.render()
-
-            # Update the observation
-            obs, info = self.env.get_obs()
+        
+        # D2 has ranomization with obstacles
+        elif self.name.endswith("D2"):
+            pass
         else:
             raise ValueError(f"Unknown environment name: {self.name}")
 
@@ -835,6 +852,12 @@ class EnvOmniGibson(EB.EnvBase):
             else:
                 obs_IL['combined::point_cloud'] = pcd
         
+        # add robot sensor poses
+        for k in self.robot.sensors:
+            sensor_pose = self.robot.sensors[k].get_position_orientation()
+            obs_IL.update({f"{k}_pose": np.concatenate([sensor_pose[0], sensor_pose[1]])})
+
+        
         # temp_start_time = time.time()
         robot_prop_states = self.env.robots[0]._get_proprioception_dict()
         obs_IL.update(robot_prop_states)
@@ -851,6 +874,9 @@ class EnvOmniGibson(EB.EnvBase):
 
         # eef_state = {'eef_state': self.process_eef(robot_prop_states)}
         # obs_IL.update(eef_state)
+
+        base_link_pose = self.env.robots[0].get_position_orientation()
+        obs_IL.update({'base_link_pose': np.concatenate([base_link_pose[0], base_link_pose[1]])})
 
         return obs_IL, info
 
@@ -882,16 +908,16 @@ class EnvOmniGibson(EB.EnvBase):
         { str: bool } with at least a "task" key for the overall task success,
         and additional optional keys corresponding to other task criteria.
         """
-        # NOTE: Currently only using the final state to determine success. Verify satisfactory for all tasks.
-        teacup_obj = self.env.scene.object_registry("name", "teacup")
-        coffee_cup_obj = self.env.scene.object_registry("name", "coffee_cup")
-        success = teacup_obj.states[object_states.Inside].get_value(coffee_cup_obj)
+        # # NOTE: Currently only using the final state to determine success. Verify satisfactory for all tasks.
+        # teacup_obj = self.env.scene.object_registry("name", "teacup")
+        coffee_cup_obj = self.env.scene.object_registry("name", "coffee_cup_7")
+        # success = teacup_obj.states[object_states.Inside].get_value(coffee_cup_obj)
         
         # # if teacup is grasped
         # success = teacup_obj.states[object_states.Touching].get_value(other=self.env.robots[0])
 
         # # if coffee_cup is grasped
-        # success = coffee_cup_obj.states[object_states.Touching].get_value(other=self.env.robots[0])
+        success = coffee_cup_obj.states[object_states.Touching].get_value(other=self.env.robots[0])
 
         return {"task": success}
 
