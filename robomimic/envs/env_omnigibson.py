@@ -42,7 +42,7 @@ class EnvErrTypes(str, Enum):
 
 def update_kwargs(kwargs):
     # RESOLUTION = (128, 450)
-    RESOLUTION = (128, 128)
+    RESOLUTION = (256, 256)
 
     # Explicity add the depth_linear and rgb modalities
     kwargs["robots"][0]["obs_modalities"].append("depth_linear")
@@ -236,6 +236,7 @@ class EnvOmniGibson(EB.EnvBase):
         self.obj_visible_at_start_of_manip = False
         self.IL_obs_keys = ["rgb", "depth_linear"]
         self.sampled_base_poses = {"failure": list(), "success": list()}
+        self.manipulation_only = False
         
         # TODO: uncomment the following lines for data generation.
         controller_config = {
@@ -414,7 +415,7 @@ class EnvOmniGibson(EB.EnvBase):
     def _randomize_object_pose_D0(self, objs):
 
         # Sampling random object poses on table using custom thresholds
-        pos_magnitude = [-0.1, 0.1] 
+        pos_magnitude = [-0.15, 0.15] 
         rot_magnitude = np.pi / 12  # 15 degrees
 
         # for debugging
@@ -433,7 +434,7 @@ class EnvOmniGibson(EB.EnvBase):
                 orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
                 obj.set_position_orientation(pos, orn)
 
-    def _randomize_object_pose_D2(self, objs):
+    def _randomize_object_pose_D1(self, objs):
         # pos_magnitude = 0.10  # 5cm
         # rot_magnitude = np.pi / 12  # 15 degrees
 
@@ -524,6 +525,16 @@ class EnvOmniGibson(EB.EnvBase):
         # # Reset the robot to a specific position. TODO: Make this general
         # self.env.robots[0].set_position_orientation(position=th.tensor([-0.5, 0.0, 0.0]))
         self.env.robots[0].set_position_orientation(position=th.tensor([-0.863, -0.26, 0]))
+
+        # for static manipulation only
+        if self.manipulation_only:
+            init_joint_pos = th.tensor([     0.332,     -0.430,      0.004,      0.007,      0.007,      0.259,
+             1.427,     -1.658,     -0.543,      0.051,     -0.000,     -0.000,
+             1.894,      1.894,     -0.985,     -0.985,      1.561,      1.562,
+             0.910,      0.910,     -1.554,     -1.554,      0.050,      0.050,
+             0.050,      0.050])
+            self.robot.set_joint_positions(init_joint_pos) 
+            for _ in range(5): og.sim.step()
 
 
         # # stack cup task in house_single_floor scene
@@ -701,39 +712,32 @@ class EnvOmniGibson(EB.EnvBase):
         """
         Setup the sensor position, orientation of the environment
         """
-        sensor = self.env.robots[0].sensors[f"{self.robot_name}:eyes:Camera:0"]
-        # sensor.image_height = 128
-        # sensor.image_width = 128
-        self.K = sensor.intrinsic_matrix
-        # TODO: These are used in normalization of the point cloud, take a look at these values again!
-        self.pcd_offset = np.array([0.0, 0.0, 0.0])
-        self.pcd_norm_range = np.array([1.0, 1.0, 1.0])
-        self.clip_bbox_size = np.array([10, 10, 10])
-        self.world_to_cam_tf = np.eye(4)
-        self.sensor_max_depth = 10.0
-        self.number_ponits_to_sample = 4096
+        all_sensor_info = {}
+        for sensor_name, sensor in self.env.robots[0].sensors.items():
+            # sensor = self.env.robots[0].sensors[f"{self.robot_name}:eyes:Camera:0"]
+            self.K = sensor.intrinsic_matrix
+            # TODO: These are used in normalization of the point cloud, take a look at these values again!
+            self.pcd_offset = np.array([0.0, 0.0, 0.0])
+            self.pcd_norm_range = np.array([1.0, 1.0, 1.0])
+            self.clip_bbox_size = np.array([10, 10, 10])
+            self.world_to_cam_tf = np.eye(4)
+            self.sensor_max_depth = 10.0
+            self.number_ponits_to_sample = 4096
 
-        sensor_info = {
-            "K": self.K,
-            "world_to_cam_tf": self.world_to_cam_tf,
-            "image_height": sensor.image_height,
-            "image_width": sensor.image_width,
-            'sensor_max_depth': self.sensor_max_depth,
-            'number_points_to_sample': self.number_ponits_to_sample,
-            'pcd_offset': self.pcd_offset,
-            'pcd_norm_range': self.pcd_norm_range,
-            'clip_bbox_size': self.clip_bbox_size,
-        }
+            sensor_info = {
+                "K": self.K,
+                "world_to_cam_tf": self.world_to_cam_tf,
+                "image_height": sensor.image_height,
+                "image_width": sensor.image_width,
+                'sensor_max_depth': self.sensor_max_depth,
+                'number_points_to_sample': self.number_ponits_to_sample,
+                'pcd_offset': self.pcd_offset,
+                'pcd_norm_range': self.pcd_norm_range,
+                'clip_bbox_size': self.clip_bbox_size,
+            }
+            all_sensor_info[sensor_name] = sensor_info
 
-        # left_eef_sensor = self.env.robots[0].sensors[f"{self.robot_name}:left_eef_link:Camera:0"]
-        # left_eef_sensor.image_height = 200
-        # left_eef_sensor.image_width = 200
-
-        # right_eef_sensor = self.env.robots[0].sensors[f"{self.robot_name}:right_eef_link:Camera:0"]
-        # right_eef_sensor.image_height = 200
-        # right_eef_sensor.image_width = 200
-
-        return sensor_info
+        return all_sensor_info
     
     def process_point_cloud(self, obs):
         """
