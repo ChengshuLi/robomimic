@@ -249,6 +249,23 @@ class EnvOmniGibson(EB.EnvBase):
         }
 
         self.env.robots[0].reload_controllers(controller_config=controller_config)
+        # self.env.robots[0].set_position_orientation(position=th.tensor([-3.163, -0.26, 0]))
+
+        # This is done only for the r1_pick_cup task
+        if "r1_pick_cup" in env_name:
+            floor = self.env.scene.object_registry("name", "floors_ptwlei_0")
+            # floor2 = self.env.scene.object_registry("name", "floors_ifmioj_0")
+            # breakfast_table = self.env.scene.object_registry("name", "breakfast_table_6")
+            temp_state = og.sim.dump_state(serialized=False)
+            og.sim.stop()
+            floor.scale = th.tensor([1.8, 1.0, 1.0])
+            # floor2.scale = th.tensor([1.8, 1.0, 1.0])
+            # breakfast_table.scale = th.tensor([1.668, 1.038, 0.994])
+            og.sim.play()
+            og.sim.load_state(temp_state)
+            og.sim.step()
+            # for _ in range(10): og.sim.step()
+
         # self.env.robots[0]._grasping_mode = "sticky"
         self.env.scene.update_initial_state()
         self.robot = self.env.robots[0]
@@ -314,8 +331,15 @@ class EnvOmniGibson(EB.EnvBase):
                                       self.eef_current_marker_right, self.eef_goal_marker_right], [self.env.scene] * 4)
             og.sim.step()
 
-        self.enable_head_tracking = False
-        self.primitive = StarterSemanticActionPrimitives(self.env, self.env.robots[0], enable_head_tracking=self.enable_head_tracking, curobo_batch_size=10)
+        self.enable_head_tracking = True
+        # Head tracking with soft visibility constraint requires use_cuda_graph=False
+        self.primitive = StarterSemanticActionPrimitives(
+            self.env,
+            self.env.robots[0],
+            enable_head_tracking=self.enable_head_tracking,
+            curobo_batch_size=10,
+            curobo_use_cuda_graph=not self.enable_head_tracking,
+        )
 
         # Create CuRobo instance
         self.cmg = self.primitive._motion_generator
@@ -324,20 +348,6 @@ class EnvOmniGibson(EB.EnvBase):
         self.with_color = False
 
         self.global_env_step = 0
-
-        # This is done only for the r1_pick_cup task
-        if "r1_pick_cup" in env_name:
-            floor = self.env.scene.object_registry("name", "floors_ptwlei_0")
-            # floor2 = self.env.scene.object_registry("name", "floors_ifmioj_0")
-            breakfast_table = self.env.scene.object_registry("name", "breakfast_table_6")
-            temp_state = og.sim.dump_state(serialized=False)
-            og.sim.stop()
-            floor.scale = th.tensor([1.8, 1.0, 1.0])
-            # floor2.scale = th.tensor([1.8, 1.0, 1.0])
-            breakfast_table.scale = th.tensor([1.668, 1.038, 0.994])
-            og.sim.play()
-            og.sim.load_state(temp_state)
-            for _ in range(10): og.sim.step()
 
 
     def step(self, action, video_writer=None):
