@@ -332,8 +332,15 @@ class EnvOmniGibson(EB.EnvBase):
                                       self.eef_current_marker_right, self.eef_goal_marker_right], [self.env.scene] * 4)
             og.sim.step()
 
-        self.enable_head_tracking = False
-        self.primitive = StarterSemanticActionPrimitives(self.env, self.env.robots[0], enable_head_tracking=self.enable_head_tracking, curobo_batch_size=10)
+        self.enable_head_tracking = True
+        # Head tracking with soft visibility constraint requires use_cuda_graph=False
+        self.primitive = StarterSemanticActionPrimitives(
+            self.env,
+            self.env.robots[0],
+            enable_head_tracking=self.enable_head_tracking,
+            curobo_batch_size=10,
+            curobo_use_cuda_graph=not self.enable_head_tracking,
+        )
 
         # Create CuRobo instance
         self.cmg = self.primitive._motion_generator
