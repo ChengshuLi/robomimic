@@ -331,7 +331,7 @@ class EnvOmniGibson(EB.EnvBase):
                                       self.eef_current_marker_right, self.eef_goal_marker_right], [self.env.scene] * 4)
             og.sim.step()
 
-        self.enable_head_tracking = True
+        self.enable_head_tracking = False
         # Head tracking with soft visibility constraint requires use_cuda_graph=False
         self.primitive = StarterSemanticActionPrimitives(
             self.env,
