@@ -220,7 +220,6 @@ class EnvOmniGibson(EB.EnvBase):
         self.add_distractor_objects = False
         self.single_arm = "right"
 
-        breakpoint()
         update_kwargs(kwargs)
         # load_house_single_floor(kwargs)
         # load_empty_scene(kwargs)
@@ -877,6 +876,9 @@ class EnvOmniGibson(EB.EnvBase):
 
         base_link_pose = self.env.robots[0].get_position_orientation()
         obs_IL.update({'base_link_pose': np.concatenate([base_link_pose[0], base_link_pose[1]])})
+
+        eyes_pose = self.robot.links["eyes"].get_position_orientation()
+        obs_IL.update({'eyes_pose': np.concatenate([eyes_pose[0], eyes_pose[1]])})
 
         return obs_IL, info
 
