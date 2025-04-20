@@ -572,7 +572,7 @@ class EnvOmniGibson(EB.EnvBase):
 
             # TODO: maybe reduce the pcd range can be helpful
             # self.pcd_norm_range = np.array([1.0, 1.0, 1.0])
-            # self.clip_bbox_size = np.array([2.5, 1.5, 1.5])
+            # self.clip_bbox_size = np.array([2.5, 1.5, 1])
             
             # change the viewport output to the viewer camera
             viewer_prim_path = og.sim.viewer_camera.prim_path
@@ -616,6 +616,11 @@ class EnvOmniGibson(EB.EnvBase):
             self.sensor_max_depth = 2.0
             self.number_ponits_to_sample = 2048
 
+
+        else:
+            # TODO: need to do sensor setup for other environments, check the incoming repo change
+            print("Unknown environment name: ", self.name)
+            breakpoint()
         return sensor_info
 
     def process_point_cloud(self, obs):
@@ -714,7 +719,27 @@ class EnvOmniGibson(EB.EnvBase):
         if 'r1' in self.name: assert prop_eef_basepose_state.shape[0] == 38 # for r1 robot
         return prop_eef_basepose_state
 
-    def process_obj(self):
+
+    def process_base_vel_robot_frame(self, robot_prop_states):
+        base_vel = copy.deepcopy(robot_prop_states['base_qvel'])
+        base_vel_xy = base_vel[:2]
+        base_vel_z = base_vel[2] # rotation along z-axis should not be changed
+        base_vel_vec = th.cat([base_vel_xy, th.zeros(1)]) # 3
+        base_vel_ori = th.Tensor([0, 0, 0, 1]) # 4
+        base_link_pose = self.env.robots[0].get_position_orientation()
+        # TODO: construct the frame attached to the base velocity 
+        base_vel_vec_local, base_vel_ori_local = T.relative_pose_transform(base_vel_vec + base_link_pose[0], base_vel_ori, *base_link_pose)
+        print('original base vel', base_vel_xy, 'base vel norm', th.norm(base_vel_xy))
+        print('base vel in robot frame', base_vel_vec_local[:2], 'local base vel norm', th.norm(base_vel_vec_local))
+        breakpoint()
+        base_vel_local = th.cat([base_vel_vec_local[:2], th.Tensor([base_vel_z])]) 
+        robot_prop_states['base_vel'] = base_vel_local
+        print('breakpoint in transform the base vel to robot frame')
+        print('TODO: still need to handle the z axis velocity, what does the position mean in the controller???')
+        breakpoint()
+        return robot_prop_states
+
+    def process_obj_robot_frame(self):
         # process object states, tranform them into robot fixed frames
 
         base_link_pose = self.env.robots[0].get_position_orientation()
@@ -757,7 +782,7 @@ class EnvOmniGibson(EB.EnvBase):
         # customize observation for IL baselines
         obs_IL = {}
 
-        obj_states = self.process_obj()
+        obj_states = self.process_obj_robot_frame()
         obs_IL.update(obj_states)
 
         other_obs = self.get_observation(di) # get default observations
@@ -788,7 +813,17 @@ class EnvOmniGibson(EB.EnvBase):
         
 
         robot_prop_states = self.env.robots[0]._get_proprioception_dict()
+        # TODO: need to add the base velocity in the robot frame
+        # robot_prop_states = self.process_base_vel_robot_frame(robot_prop_states)
+        print('check base vel')
+        breakpoint()
+
         obs_IL.update(robot_prop_states)
+
+        base_link_pose = self.env.robots[0].get_position_orientation()
+        obs_IL.update({'base_link_pose': np.concatenate([base_link_pose[0], base_link_pose[1]])})
+        print('breakpoint for update base link pose')
+        breakpoint()
 
         prop_state = {'prop_state': self.process_prop(robot_prop_states)}
         obs_IL.update(prop_state)
