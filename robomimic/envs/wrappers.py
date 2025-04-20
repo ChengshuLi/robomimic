@@ -217,6 +217,18 @@ class FrameStackWrapper(EnvWrapper):
             self.timestep += 1
             obs["actions"] = action[: self.env.action_dimension]
 
+    
+    def get_obs(self, action):
+        obs = self.env.get_obs_IL()
+
+        self.update_obs(obs, action=action, reset=False)
+        # update frame history
+        for k in obs:
+            # make sure to have leading dim of 1 for easy concatenation
+            self.obs_history[k].append(obs[k][None])
+        obs_ret = self._get_stacked_obs_from_history()
+        return obs_ret
+    
     def _to_string(self):
         """Info to pretty print."""
         return "num_frames={}".format(self.num_frames)

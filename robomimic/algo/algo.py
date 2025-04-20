@@ -11,6 +11,7 @@ import textwrap
 from copy import deepcopy
 from collections import OrderedDict
 
+import time
 import torch.nn as nn
 import torch
 import numpy
@@ -554,9 +555,31 @@ class RolloutPolicy(object):
                 and np.array values for each key)
             goal (dict): goal observation
         """
+        # # breakpoint()
+        # # debug the pcd
+        # import open3d as o3d
+        # for i in range(len(ob["combined::color_point_cloud"])):
+        #     pcd_vis = o3d.geometry.PointCloud()
+        #     pcd = ob["combined::color_point_cloud"][i]
+        #     pcd_vis.colors = o3d.utility.Vector3dVector(pcd[:, :3])
+        #     pcd_vis.points = o3d.utility.Vector3dVector(pcd[:, 3:])
+        #     o3d.visualization.draw_geometries([pcd_vis])
+        # # =============
+
         ob = self._prepare_observation(ob)
         if goal is not None:
             goal = self._prepare_observation(goal)
+        
+        # # debug the pcd
+        # import open3d as o3d
+        # for i in range(len(ob["combined::color_point_cloud"][0])):
+        #     pcd_vis = o3d.geometry.PointCloud()
+        #     pcd = ob["combined::color_point_cloud"][0, i]
+        #     pcd_vis.colors = o3d.utility.Vector3dVector(pcd[:, :3].cpu().numpy())
+        #     pcd_vis.points = o3d.utility.Vector3dVector(pcd[:, 3:].cpu().numpy())
+        #     o3d.visualization.draw_geometries([pcd_vis])
+        # # =============
+
         ac = self.policy.get_action(obs_dict=ob, goal_dict=goal)
         ac = TensorUtils.to_numpy(ac[0])
         ac_normalized = deepcopy(ac)
