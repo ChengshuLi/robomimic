@@ -588,84 +588,112 @@ class EnvOmniGibson(EB.EnvBase):
         for obj in objs:
             if "table" not in obj.name:
                 pos, orn = obj.get_position_orientation()
-                pos_diff_xy = np.random.uniform(pos_magnitude[0], pos_magnitude[1], size=2)
-                pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
-                pos += pos_diff
-                # TODO： without mobile motion， the target pose need to be very carefully selected
-                # pos += th.from_numpy(np.array([-.15, 0.0, 0]))
-                orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
-                orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
-                obj.set_position_orientation(pos, orn)
+                state = og.sim.dump_state()
+                while True:
+                    pos_diff_xy = np.random.uniform(pos_magnitude[0], pos_magnitude[1], size=2)
+                    pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
+                    new_pos = pos + pos_diff
+                    # TODO： without mobile motion， the target pose need to be very carefully selected
+                    # pos += th.from_numpy(np.array([-.15, 0.0, 0]))
+                    orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
+                    new_orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
+                    obj.set_position_orientation(new_pos, new_orn)
+                    for _ in range(10):
+                        og.sim.step()
+                    cond = self._get_relevant_initial_condition(obj)
+                    assert cond is not None, f"Condition not found for object {obj.name}"
+                    if cond.evaluate():
+                        break
+                    og.sim.load_state(state)
+
+    def _get_relevant_initial_condition(self, obj):
+        for cond in self.env.task.activity_initial_conditions:
+            if self.env.task.object_scope[cond.body[1]].unwrapped == obj:
+                # cond is a HEAD condition
+                # cond.children[0] is the actual binary predicate
+                return cond.children[0]
+        return None
 
     def _randomize_object_pose_D1(self, objs):
-        # pos_magnitude = 0.10  # 5cm
-        # rot_magnitude = np.pi / 12  # 15 degrees
-
-        # # for debugging
-        # # pos_magnitude = 0.001
-        # # rot_magnitude = np.pi / 10000  # 15 degrees
-
-        # for obj in objs:
-        #     if "table" not in obj.name:
-        #         pos, orn = obj.get_position_orientation()
-        #         pos_diff_xy = np.random.uniform(-pos_magnitude, pos_magnitude, size=2)
-        #         pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
-        #         pos += pos_diff
-        #         # TODO： without mobile motion， the target pose need to be very carefully selected
-        #         pos += th.from_numpy(np.array([-.15, 0.0, 0]))
-        #         orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
-        #         orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
-
-        #         pos[1] = -pos[1] # mirror the position along the y-axis
-        #         orn = T.mat2quat(T.euler2mat(th.tensor([0.0, 0.0, np.pi])) @ T.quat2mat(orn)) # add pi orientation along the y-axis
-        #         obj.set_position_orientation(pos, orn)
-
-        # # Randomize height of table
-        # breakfast_table = self.env.scene.object_registry("name", "breakfast_table")
-        # breakfast_table_current_scale = breakfast_table.scale
-        # z_scale = np.random.uniform(0.8, 1.2)
-        # # print(f"z_scale: {z_scale}")
-        # temp_state = og.sim.dump_state(serialized=False)
-        # og.sim.stop()
-        # breakfast_table.scale = th.tensor([breakfast_table_current_scale[0], breakfast_table_current_scale[1], 1.0 * z_scale])
-        # og.sim.play()
-        # og.sim.load_state(temp_state)
-        # breakfast_table.keep_still()
-        # for _ in range(10): og.sim.step()
-
-        # # debugging
-        # coffee_cup = self.env.scene.object_registry("name", "coffee_cup")
-        # x_pos = np.random.uniform(0.67, 0.71)
-        # y_pos = np.random.uniform(-0.5, 0.5)
-        # current_coffee_cup_pos = coffee_cup.get_position()
-        # coffee_cup.set_position_orientation(position=th.tensor([x_pos, y_pos, 0.9]))
-        
-        # # Sampling random object poses on table using OG API
-        # for obj in objs:
-        #     if "table" not in obj.name:
-        #         obj.states[object_states.OnTop].set_value(other=self.env.scene.object_registry("name", "breakfast_table"), new_value=True)
-
-        bar = self.env.scene.object_registry("name", "bar_udatjt_0")
-        bar_current_scale = bar.scale
-        z_scale = 0.7
-        # z_scale = np.random.uniform(0.8, 1.2)
-        temp_state = og.sim.dump_state(serialized=False)
-        og.sim.stop()
-        bar.scale = th.tensor([bar_current_scale[0], bar_current_scale[1], 1.0 * z_scale])
-        og.sim.play()
-        og.sim.load_state(temp_state)
-        bar.keep_still()
-        bar.set_position_orientation(position=th.tensor([7.287, 0.189, 0.40]))
-        for _ in range(10): og.sim.step()
-
-        # For house_single_floor scene
         for obj in objs:
             if "table" not in obj.name:
-                obj.states[object_states.OnTop].set_value(other=bar, new_value=True)
+                state = og.sim.dump_state()
+                while True:
+                    cond = self._get_relevant_initial_condition(obj)
+                    assert cond is not None, f"Condition not found for object {obj.name}"
+                    if cond.sample(True):
+                        break
+                    og.sim.load_state(state)
 
-        # teacup = self.env.scene.object_registry("name", "teacup")
-        # x_range = np.random.uniform(-0.2, 0.2)
-        # teacup.set_position_orientation(position=th.tensor([ 6.700 + x_range, 0.024,  0.739]), orientation=th.tensor([    -0.000,      0.000,      0.858,      0.514]))
+    # def _randomize_object_pose_D1(self, objs):
+    #     # pos_magnitude = 0.10  # 5cm
+    #     # rot_magnitude = np.pi / 12  # 15 degrees
+
+    #     # # for debugging
+    #     # # pos_magnitude = 0.001
+    #     # # rot_magnitude = np.pi / 10000  # 15 degrees
+
+    #     # for obj in objs:
+    #     #     if "table" not in obj.name:
+    #     #         pos, orn = obj.get_position_orientation()
+    #     #         pos_diff_xy = np.random.uniform(-pos_magnitude, pos_magnitude, size=2)
+    #     #         pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
+    #     #         pos += pos_diff
+    #     #         # TODO： without mobile motion， the target pose need to be very carefully selected
+    #     #         pos += th.from_numpy(np.array([-.15, 0.0, 0]))
+    #     #         orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
+    #     #         orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
+
+    #     #         pos[1] = -pos[1] # mirror the position along the y-axis
+    #     #         orn = T.mat2quat(T.euler2mat(th.tensor([0.0, 0.0, np.pi])) @ T.quat2mat(orn)) # add pi orientation along the y-axis
+    #     #         obj.set_position_orientation(pos, orn)
+
+    #     # # Randomize height of table
+    #     # breakfast_table = self.env.scene.object_registry("name", "breakfast_table")
+    #     # breakfast_table_current_scale = breakfast_table.scale
+    #     # z_scale = np.random.uniform(0.8, 1.2)
+    #     # # print(f"z_scale: {z_scale}")
+    #     # temp_state = og.sim.dump_state(serialized=False)
+    #     # og.sim.stop()
+    #     # breakfast_table.scale = th.tensor([breakfast_table_current_scale[0], breakfast_table_current_scale[1], 1.0 * z_scale])
+    #     # og.sim.play()
+    #     # og.sim.load_state(temp_state)
+    #     # breakfast_table.keep_still()
+    #     # for _ in range(10): og.sim.step()
+
+    #     # # debugging
+    #     # coffee_cup = self.env.scene.object_registry("name", "coffee_cup")
+    #     # x_pos = np.random.uniform(0.67, 0.71)
+    #     # y_pos = np.random.uniform(-0.5, 0.5)
+    #     # current_coffee_cup_pos = coffee_cup.get_position()
+    #     # coffee_cup.set_position_orientation(position=th.tensor([x_pos, y_pos, 0.9]))
+
+    #     # # Sampling random object poses on table using OG API
+    #     # for obj in objs:
+    #     #     if "table" not in obj.name:
+    #     #         obj.states[object_states.OnTop].set_value(other=self.env.scene.object_registry("name", "breakfast_table"), new_value=True)
+
+    #     bar = self.env.scene.object_registry("name", "bar_udatjt_0")
+    #     bar_current_scale = bar.scale
+    #     z_scale = 0.7
+    #     # z_scale = np.random.uniform(0.8, 1.2)
+    #     temp_state = og.sim.dump_state(serialized=False)
+    #     og.sim.stop()
+    #     bar.scale = th.tensor([bar_current_scale[0], bar_current_scale[1], 1.0 * z_scale])
+    #     og.sim.play()
+    #     og.sim.load_state(temp_state)
+    #     bar.keep_still()
+    #     bar.set_position_orientation(position=th.tensor([7.287, 0.189, 0.40]))
+    #     for _ in range(10): og.sim.step()
+
+    #     # For house_single_floor scene
+    #     for obj in objs:
+    #         if "table" not in obj.name:
+    #             obj.states[object_states.OnTop].set_value(other=bar, new_value=True)
+
+    #     # teacup = self.env.scene.object_registry("name", "teacup")
+    #     # x_range = np.random.uniform(-0.2, 0.2)
+    #     # teacup.set_position_orientation(position=th.tensor([ 6.700 + x_range, 0.024,  0.739]), orientation=th.tensor([    -0.000,      0.000,      0.858,      0.514]))
 
     def reset(self):
         """
@@ -683,29 +711,6 @@ class EnvOmniGibson(EB.EnvBase):
             self.err = "None"
             self.obj_visible_at_start_of_manip = False
 
-        if self.policy_rollout:
-
-            if self.name.startswith("r1_pick_cup"):
-            
-                if self.manipulation_only:
-                    # coffee_obj = self.env.scene.object_registry("name", "coffee_cup_7")
-                    # coffee_position = coffee_obj.get_position_orientation()[0]
-                    # coffee_position[0] = 1.337
-                    # coffee_obj.set_position_orientation(position=coffee_position)
-                    # table_obj = self.env.scene.object_registry("name", "breakfast_table_6") 
-                    # table_obj.set_position_orientation(position=th.tensor([1.337, -0.27, 0.7]))
-                    # for _ in range(5): og.sim.step()
-                    self.env.robots[0].set_position_orientation(position=th.tensor([0.332, -0.43, 0]))
-                    for _ in range(5): og.sim.step()
-
-
-        else:
-            # setting up the pose for the data generation phase
-
-            # # Reset the robot to a specific position. TODO: Make this general
-            # self.env.robots[0].set_position_orientation(position=th.tensor([-0.5, 0.0, 0.0]))
-            self.env.robots[0].set_position_orientation(position=th.tensor([-0.863, -0.26, 0]))
-
         # for static manipulation only
         if self.manipulation_only:
             init_joint_pos = th.tensor([     0.332,     -0.430,      0.004,      0.007,      0.007,      0.259,
@@ -713,10 +718,12 @@ class EnvOmniGibson(EB.EnvBase):
              1.894,      1.894,     -0.985,     -0.985,      1.561,      1.562,
              0.910,      0.910,     -1.554,     -1.554,      0.050,      0.050,
              0.050,      0.050])
-            self.robot.set_joint_positions(init_joint_pos) 
-            for _ in range(5): og.sim.step()
+            self.robot.set_joint_positions(init_joint_pos)
+            self.env.robots[0].set_position_orientation(position=th.tensor([0.332, -0.430, 0.0]))
+        else:
+            self.env.robots[0].set_position_orientation(position=th.tensor([-0.863, -0.26, 0.0]))
 
-
+        for _ in range(5): og.sim.step()
         # # stack cup task in house_single_floor scene
         # self.robot.set_position_orientation(position=th.tensor([9.0, 1.5,  0.2]), orientation=th.tensor([-0.0000, 0.0000, 0.8734, -0.4870]))
         # self.robot.set_joint_positions(th.tensor([-0.3681,  1.2081, -0.2686,  1.5397,  0.9159, -1.5726]), indices=self.robot.arm_control_idx["left"])
@@ -782,7 +789,7 @@ class EnvOmniGibson(EB.EnvBase):
         elif self.name.endswith("D1"):
             # # for arm role change
             task_relevant_objs = self._get_task_relevant_objs()
-            self._randomize_object_pose_D2(task_relevant_objs)
+            self._randomize_object_pose_D1(task_relevant_objs)
 
             # Step one time to update the scene and render a few times as well
             og.sim.step()
@@ -1349,7 +1356,7 @@ class EnvOmniGibson(EB.EnvBase):
             # teacup_obj = self.env.scene.object_registry("name", "teacup")
             coffee_cup_obj = self.env.scene.object_registry("name", "coffee_cup_7")
             # success = teacup_obj.states[object_states.Inside].get_value(coffee_cup_obj)
-            
+
             # # if teacup is grasped
             # success = teacup_obj.states[object_states.Touching].get_value(other=self.env.robots[0])
 
