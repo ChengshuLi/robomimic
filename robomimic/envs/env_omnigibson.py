@@ -19,6 +19,7 @@ from omnigibson import object_states
 from omnigibson.objects.primitive_object import PrimitiveObject
 from omnigibson.action_primitives.starter_semantic_action_primitives import StarterSemanticActionPrimitives
 from omnigibson.objects.dataset_object import DatasetObject
+from omnigibson.action_primitives.curobo import CuRoboEmbodimentSelection
 
 # from mimicgen.train_scripts.train_prep_data import compute_point_cloud_from_rgbd
 from scipy.spatial.transform import Rotation as R
@@ -406,18 +407,20 @@ class EnvOmniGibson(EB.EnvBase):
 
         self.enable_head_tracking = False
         if self._init_kwargs['init_curobo']:
+        # if not self.policy_rollout:
             # Head tracking with soft visibility constraint requires use_cuda_graph=False
             self.primitive = StarterSemanticActionPrimitives(
                 self.env,
                 self.env.robots[0],
                 enable_head_tracking=self.enable_head_tracking,
-                curobo_batch_size=10,
+                curobo_batch_size=4,
                 curobo_use_cuda_graph=not self.enable_head_tracking,
                 use_base_pose_hack=True
             )
 
             # Create CuRobo instance
             self.cmg = self.primitive._motion_generator
+
 
         self.global_env_step = 0
 
