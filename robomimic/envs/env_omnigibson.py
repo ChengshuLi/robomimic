@@ -890,6 +890,10 @@ class EnvOmniGibson(EB.EnvBase):
         """
         Setup the mass, friction specifically for each task
         """
+        # Change the color of the robot to be black.
+        for material in self.robot.materials:
+            material.diffuse_color_constant = th.tensor([0.0, 0.0, 0.0])
+
         if self.name.startswith("test_r1_cup"):
             # Increase gripper friction
             state = og.sim.dump_state()
