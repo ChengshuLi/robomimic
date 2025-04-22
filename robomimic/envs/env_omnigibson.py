@@ -1335,6 +1335,11 @@ class EnvOmniGibson(EB.EnvBase):
         { str: bool } with at least a "task" key for the overall task success,
         and additional optional keys corresponding to other task criteria.
         """
+        unsuccess_bddl = len(self.env.task._termination_conditions["predicate"].goal_status["unsatisfied"])
+        success_bddl = unsuccess_bddl == 0
+        result = {"task": success_bddl}
+
+        # Additional success criteria
         if self.name.startswith("r1_pick_cup"):
             # # NOTE: Currently only using the final state to determine success. Verify satisfactory for all tasks.
             # teacup_obj = self.env.scene.object_registry("name", "teacup")
@@ -1346,28 +1351,16 @@ class EnvOmniGibson(EB.EnvBase):
 
             # # if coffee_cup is grasped
             success_touching = coffee_cup_obj.states[object_states.Touching].get_value(other=self.env.robots[0])
-            unsuccess_bddl = len(self.env.task._termination_conditions["predicate"].goal_status["unsatisfied"])
-            success_lift = False
-            if unsuccess_bddl == 0:
-                success_bddl = True
-            else:
-                success_bddl = False
             # get coffee_cup object position
-            success_lift = False
             coffee_cup_pos = coffee_cup_obj.get_position_orientation()[0][2]
-            if coffee_cup_pos > 0.82:
-                success_lift = True
-            return {
-                "task": success_lift,
+            success_lift = coffee_cup_pos > 0.82
+            result.update({
                 "touching": success_touching,
                 "bddl": success_bddl,
                 "lift": success_lift,
-            }
+            })
 
-        else:
-            raise ValueError(f"TODO: need to setup the is_success function for task: {self.name}")
-
-        return {"task": success}
+        return result
 
     @property
     def name(self):
