@@ -306,6 +306,8 @@ def create_env_for_data_processing(
     use_image_obs=None,
     use_depth_obs=None,
     init_curobo=True,
+    policy_rollout=False,
+    manipulation_only=False,
 ):
     """
     Creates environment for processing dataset observations and rewards.
@@ -343,7 +345,10 @@ def create_env_for_data_processing(
 
     env_kwargs["init_curobo"] = init_curobo
     if env_type == EB.EnvType.OG_TYPE:
-        return env_class.create_for_data_processing(env_name=env_name, **env_kwargs)
+        return env_class.create_for_data_processing(env_name=env_name, 
+                                                    policy_rollout=policy_rollout,
+                                                    manipulation_only=manipulation_only,
+                                                    **env_kwargs)
 
     # remove possibly redundant values in kwargs
     env_kwargs = deepcopy(env_kwargs)
