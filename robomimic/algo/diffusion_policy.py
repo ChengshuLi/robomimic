@@ -67,7 +67,11 @@ class DiffusionPolicyUNet(PolicyAlgo):
         # create network object
         noise_pred_net = ConditionalUnet1D(
             input_dim=self.ac_dim,
-            global_cond_dim=obs_dim*self.algo_config.horizon.observation_horizon
+            global_cond_dim=obs_dim*self.algo_config.horizon.observation_horizon,
+            diffusion_step_embed_dim=self.algo_config.unet.diffusion_step_embed_dim,
+            down_dims=self.algo_config.unet.down_dims,
+            kernel_size=self.algo_config.unet.kernel_size,
+            n_groups=self.algo_config.unet.n_groups
         )
 
         # the final arch has 2 parts

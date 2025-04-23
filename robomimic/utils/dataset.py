@@ -209,7 +209,10 @@ class SequenceDataset(torch.utils.data.Dataset):
         # determine index mapping
         self.total_num_sequences = 0
         for ep in self.demos:
-            demo_length = self.hdf5_file["data/{}".format(ep)].attrs["num_samples"]
+            if "num_samples" not in self.hdf5_file["data/{}".format(ep)].attrs:
+                demo_length = self.hdf5_file["data/{}".format(ep)].attrs["num_samples"]
+            else:
+                demo_length = self.hdf5_file["data/{}".format(ep)]["actions"].shape[0]
             self._demo_id_to_start_indices[ep] = self.total_num_sequences
             self._demo_id_to_demo_length[ep] = demo_length
 
