@@ -250,7 +250,7 @@ class EnvOmniGibson(EB.EnvBase):
                                       self.eef_current_marker_right, self.eef_goal_marker_right], [self.env.scene] * 4)
             og.sim.step()
 
-        self.enable_head_tracking = False
+        self.enable_head_tracking = True
         if self._init_kwargs['init_curobo']:
         # if not self.policy_rollout:
             # Head tracking with soft visibility constraint requires use_cuda_graph=False
