@@ -563,11 +563,10 @@ class EnvOmniGibson(EB.EnvBase):
 
         # for static manipulation only
         if self.manipulation_only:
-            init_joint_pos = th.tensor([     0.332,     -0.430,      0.004,      0.007,      0.007,      0.259,
-             1.427,     -1.658,     -0.543,      0.051,     -0.000,     -0.000,
-             1.894,      1.894,     -0.985,     -0.985,      1.561,      1.562,
-             0.910,      0.910,     -1.554,     -1.554,      0.050,      0.050,
-             0.050,      0.050])
+            init_joint_pos = init_joint_pos = th.tensor([
+                0.5, -0.430, 0.004, 0.007, 0.007, 0.259, 1.3, -2.3, -1.2, 0.0,
+                0.0, 0.0, 1.894, 1.894, -0.985, -0.985, 1.561, 1.562, 0.910, 0.910,
+                -1.554, -1.554, 0.050, 0.050, 0.050, 0.050])
             self.robot.set_joint_positions(init_joint_pos)
             # self.env.robots[0].set_position_orientation(position=th.tensor([0.332, -0.430, 0.0]))
         # else:
