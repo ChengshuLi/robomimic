@@ -98,6 +98,7 @@ class EnvOmniGibson(EB.EnvBase):
         env_name,
         policy_rollout=False,
         manipulation_only=False,
+        real_robot_mode=False,
         **kwargs,
     ):
         self._env_name = env_name
@@ -107,6 +108,7 @@ class EnvOmniGibson(EB.EnvBase):
         self.policy_rollout = policy_rollout
         self.with_color = True
         self.manipulation_only = manipulation_only
+        self.real_robot_mode = real_robot_mode
         self.init_nav_manip = False
 
         # Some general updates to kwargs
@@ -1325,9 +1327,9 @@ class EnvOmniGibson(EB.EnvBase):
                 0.000,
                 0.000,
                 -0.0000, # 6 virtual base joint 
-                0.5,
-                -1.0,
-                -0.8,
+                1.375 if self.real_robot_mode else 0.5,
+                -2.195 if self.real_robot_mode else -1.0,
+                -0.96 if self.real_robot_mode else -0.8,
                 -0.0000, # 4 torso joints
                 -0.000,
                 0.000,
