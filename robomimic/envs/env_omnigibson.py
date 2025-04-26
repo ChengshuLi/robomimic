@@ -262,7 +262,8 @@ class EnvOmniGibson(EB.EnvBase):
                 enable_head_tracking=self.enable_head_tracking,
                 curobo_batch_size=10,
                 curobo_use_cuda_graph=not self.enable_head_tracking,
-                use_base_pose_hack=True
+                use_base_pose_hack=True,
+                real_robot_mode=self.real_robot_mode,
             )
 
             # Create CuRobo instance
