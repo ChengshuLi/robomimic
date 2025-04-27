@@ -98,6 +98,7 @@ class EnvOmniGibson(EB.EnvBase):
         env_name,
         policy_rollout=False,
         manipulation_only=False,
+        real_robot_mode=False,
         **kwargs,
     ):
         self._env_name = env_name
@@ -107,6 +108,7 @@ class EnvOmniGibson(EB.EnvBase):
         self.policy_rollout = policy_rollout
         self.with_color = True
         self.manipulation_only = manipulation_only
+        self.real_robot_mode = real_robot_mode
         self.init_nav_manip = False
         self.debug_from_saved_state = False
         self.retract_type = "retract_to_canonical_pose_maintain_orn"     # Options: ["retract_to_canonical_pose", "retract_to_start_of_arm_mp"]
@@ -267,7 +269,8 @@ class EnvOmniGibson(EB.EnvBase):
                 curobo_batch_size=6,
                 # curobo_use_cuda_graph=not self.enable_head_tracking,
                 curobo_use_cuda_graph=False,
-                use_base_pose_hack=False
+                use_base_pose_hack=False,
+                real_robot_mode=self.real_robot_mode,
             )
 
             # Create CuRobo instance
@@ -593,11 +596,10 @@ class EnvOmniGibson(EB.EnvBase):
 
         # for static manipulation only
         if self.manipulation_only:
-            init_joint_pos = th.tensor([     0.332,     -0.430,      0.004,      0.007,      0.007,      0.259,
-             1.427,     -1.658,     -0.543,      0.051,     -0.000,     -0.000,
-             1.894,      1.894,     -0.985,     -0.985,      1.561,      1.562,
-             0.910,      0.910,     -1.554,     -1.554,      0.050,      0.050,
-             0.050,      0.050])
+            init_joint_pos = init_joint_pos = th.tensor([
+                0.5, -0.430, 0.004, 0.007, 0.007, 0.259, 1.3, -2.3, -1.2, 0.0,
+                0.0, 0.0, 1.894, 1.894, -0.985, -0.985, 1.561, 1.562, 0.910, 0.910,
+                -1.554, -1.554, 0.050, 0.050, 0.050, 0.050])
             self.robot.set_joint_positions(init_joint_pos)
             # self.env.robots[0].set_position_orientation(position=th.tensor([0.332, -0.430, 0.0]))
         # else:
@@ -1372,9 +1374,9 @@ class EnvOmniGibson(EB.EnvBase):
                 0.000,
                 0.000,
                 -0.0000, # 6 virtual base joint 
-                0.5,
-                -1.0,
-                -0.8,
+                1.375 if self.real_robot_mode else 0.5,
+                -2.195 if self.real_robot_mode else -1.0,
+                -0.96 if self.real_robot_mode else -0.8,
                 -0.0000, # 4 torso joints
                 -0.000,
                 0.000,
