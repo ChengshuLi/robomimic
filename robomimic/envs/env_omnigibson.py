@@ -110,15 +110,17 @@ class EnvOmniGibson(EB.EnvBase):
         self.manipulation_only = manipulation_only
         self.real_robot_mode = real_robot_mode
         self.init_nav_manip = False
+        self.debug_from_saved_state = False
+        self.retract_type = "retract_to_canonical_pose_maintain_orn"     # Options: ["retract_to_canonical_pose", "retract_to_start_of_arm_mp"]
 
-        # Some general updates to kwargs
-        self.update_kwargs(kwargs)
         if self.name.startswith("r1_pick_cup"):
             self.update_params_r1_pick_cup(kwargs)
         if self.name.startswith("r1_tidy_table"):
-            self.update_kwargs_r1_tidy_table(kwargs)
+            self.update_params_r1_tidy_table(kwargs)
         if self.name.startswith("r1_dishes_away"):
-            self.update_kwargs_r1_dishes_away(kwargs)
+            self.update_params_r1_dishes_away(kwargs)
+        # Some general updates to kwargs. Always call this after the task specific updates in the previous lines
+        self.update_kwargs(kwargs)
 
         if self.policy_rollout:
             # customize the environment for policy rollout
@@ -180,7 +182,6 @@ class EnvOmniGibson(EB.EnvBase):
         }
 
         self.env.robots[0].reload_controllers(controller_config=controller_config)
-        # self.env.robots[0].set_position_orientation(position=th.tensor([-3.163, -0.26, 0]))
 
         # Perform any post env creation setup
         if self.name.startswith("r1_pick_cup"):
@@ -252,7 +253,12 @@ class EnvOmniGibson(EB.EnvBase):
                                       self.eef_current_marker_right, self.eef_goal_marker_right], [self.env.scene] * 4)
             og.sim.step()
 
-        self.enable_head_tracking = True
+        self.enable_head_tracking = False
+
+        # Call reset so that robot is set to its initial pose as curobo warmup (base) depends on that (due to the joint limits of the base)
+        self.env.robots[0].set_position_orientation(position=th.tensor(self.reset_base_pose[0]), orientation=th.tensor(self.reset_base_pose[1]))
+        for _ in range(5): og.sim.step()
+
         if self._init_kwargs['init_curobo']:
         # if not self.policy_rollout:
             # Head tracking with soft visibility constraint requires use_cuda_graph=False
@@ -260,9 +266,10 @@ class EnvOmniGibson(EB.EnvBase):
                 self.env,
                 self.env.robots[0],
                 enable_head_tracking=self.enable_head_tracking,
-                curobo_batch_size=10,
-                curobo_use_cuda_graph=not self.enable_head_tracking,
-                use_base_pose_hack=True,
+                curobo_batch_size=6,
+                # curobo_use_cuda_graph=not self.enable_head_tracking,
+                curobo_use_cuda_graph=False,
+                use_base_pose_hack=False,
                 real_robot_mode=self.real_robot_mode,
             )
 
@@ -270,7 +277,15 @@ class EnvOmniGibson(EB.EnvBase):
             self.cmg = self.primitive._motion_generator
 
 
-        self.global_env_step = 0
+        self.global_env_step = 0    
+
+        # Obtain reset left and right eef pose and eyes pose
+        self.left_eef_reset_pose_wrt_robot = self.robot.get_relative_eef_pose(arm="left") 
+        self.right_eef_reset_pose_wrt_robot = self.robot.get_relative_eef_pose(arm="right") 
+        eyes_reset_pose_wrt_world = self.robot.links["eyes"].get_position_orientation()
+        robot_pose_wrt_world = self.robot.get_position_orientation()
+        self.eyes_reset_pose_wrt_robot = T.mat2pose(th.linalg.inv(T.pose2mat(robot_pose_wrt_world)) @ T.pose2mat(eyes_reset_pose_wrt_world))
+
 
     def step(self, action, video_writer=None):
         """
@@ -434,9 +449,13 @@ class EnvOmniGibson(EB.EnvBase):
         elif self.name.startswith("r1_dishes_away"):
             pos_magnitude = [-0.1, 0.1] 
             rot_magnitude = 0.01
+        elif self.name.startswith("r1_tidy_table"):
+            pos_magnitude = [-0.15, 0.15] 
+            rot_magnitude = np.pi / 12  # 15 degrees
+
 
         for obj in objs:
-            if all(keyword not in obj.name for keyword in ["table", "shelf", "bar"]):
+            if all(keyword not in obj.name for keyword in ["table", "shelf", "bar", "sink"]):
                 pos, orn = obj.get_position_orientation()
                 state = og.sim.dump_state()
                 while True:
@@ -561,8 +580,19 @@ class EnvOmniGibson(EB.EnvBase):
             self.err = "None"
             self.obj_visible_at_start_of_manip = False
 
-        # Reset the robot to a specific pose (Note that this is different from the spawned pose because curobo requires robot to be spawned at origin)
-        self.env.robots[0].set_position_orientation(position=th.tensor(self.reset_base_pose[0]), orientation=th.tensor(self.reset_base_pose[1]))
+        if self.debug_from_saved_state:
+            import pickle
+            state = pickle.load(open("/home/arpit/test_projects/mimicgen/random_files/start_of_last_nav2.pickle", "rb"))
+            og.sim.load_state(state)
+            for _ in range(5): og.sim.step()
+            fridge = self.env.scene.object_registry("name", "fridge_dszchb_0")
+            self.env.scene.remove_object(obj=fridge)
+            for _ in range(5): og.sim.step()
+
+            self.cmg.update_obstacles()
+        else:
+            # Reset the robot to a specific pose (Note that this is different from the spawned pose because curobo requires robot to be spawned at origin)
+            self.env.robots[0].set_position_orientation(position=th.tensor(self.reset_base_pose[0]), orientation=th.tensor(self.reset_base_pose[1]))
 
         # for static manipulation only
         if self.manipulation_only:
@@ -583,22 +613,12 @@ class EnvOmniGibson(EB.EnvBase):
         # else:
         #     self.env.robots[0].set_position_orientation(position=th.tensor([-0.863, -0.26, 0.0]))
 
-        if self.add_distractor_objects:
-            # Set chair poses
-            chair_0 = self.env.scene.object_registry("name", "straight_chair_amgwaw_0")
-            chair_0.set_position_orientation(position=th.tensor([-0.0725,  0.0028,  0.4485]), orientation=th.tensor([ 0.0016,  0.0020, -0.1448,  0.9895]))
-
-            chair_1 = self.env.scene.object_registry("name", "straight_chair_amgwaw_1")
-            chair_1.set_position_orientation(position=th.tensor([ 0.4266, -1.0887,  0.4484]), orientation=th.tensor([ 2.0414e-05, -1.7101e-03,  9.9991e-01, -1.3466e-02]))
-
-            chair_3 = self.env.scene.object_registry("name", "straight_chair_eospnr_0")
-            chair_3.set_position_orientation(position=th.tensor([-0.5871,  2.2136,  0.4930]))
-            chair_4 = self.env.scene.object_registry("name", "straight_chair_eospnr_1")
-            chair_4.set_position_orientation(position=th.tensor([-1.2552,  2.3325,  0.4930]))
-            for _ in range(20): og.sim.step()
-
+        # If loading a saved state, don't do randomization for all objects. Choose accodgin to what you want
+        if self.debug_from_saved_state:
+            pass
+        
         # D0 is the distribution with randomization in xy-pos and z-rot
-        if self.name.endswith("D0"):
+        elif self.name.endswith("D0"):
             task_relevant_objs = self._get_task_relevant_objs()
             self._randomize_object_pose_D0(task_relevant_objs)
 
@@ -623,19 +643,6 @@ class EnvOmniGibson(EB.EnvBase):
 
             # Update the observation
             obs, info = self.env.get_obs()
-        
-        # elif self.name.endswith("D3"):
-        #     # for arm role change
-        #     task_relevant_objs = self._get_task_relevant_objs()
-        #     self._randomize_object_pose_D2(task_relevant_objs)
-
-        #     # Step one time to update the scene and render a few times as well
-        #     og.sim.step()
-        #     for _ in range(5):
-        #         og.sim.render()
-
-        #     # Update the observation
-        #     obs, info = self.env.get_obs()
 
         # D2 has ranomization with obstacles
         elif self.name.endswith("D2"):
@@ -766,6 +773,44 @@ class EnvOmniGibson(EB.EnvBase):
             og.sim.play()
             og.sim.load_state(state)
         
+        elif self.name.startswith("r1_dishes_away"):
+            # Increase gripper friction
+            state = og.sim.dump_state()
+            og.sim.stop()
+            target_friction = 4.0
+            gripper_mat = lazy.isaacsim.core.api.materials.physics_material.PhysicsMaterial(
+                prim_path=f"{self.env.robots[0].prim_path}/gripper_mat",
+                name="gripper_material",
+                static_friction=target_friction,
+                dynamic_friction=target_friction,
+                restitution=None,
+            )
+            for links in self.env.robots[0].finger_links.values():
+                for link in links:
+                    for msh in link.collision_meshes.values():
+                        msh.apply_physics_material(gripper_mat)
+            og.sim.play()
+            og.sim.load_state(state)
+        
+        elif self.name.startswith("r1_tidy_table"):
+            # Increase gripper friction
+            state = og.sim.dump_state()
+            og.sim.stop()
+            target_friction = 4.0
+            gripper_mat = lazy.isaacsim.core.api.materials.physics_material.PhysicsMaterial(
+                prim_path=f"{self.env.robots[0].prim_path}/gripper_mat",
+                name="gripper_material",
+                static_friction=target_friction,
+                dynamic_friction=target_friction,
+                restitution=None,
+            )
+            for links in self.env.robots[0].finger_links.values():
+                for link in links:
+                    for msh in link.collision_meshes.values():
+                        msh.apply_physics_material(gripper_mat)
+            og.sim.play()
+            og.sim.load_state(state)
+
         else:
             raise ValueError(f"Unknown environment name: {self.name}, need to customize the physical properties")
         
@@ -1322,13 +1367,14 @@ class EnvOmniGibson(EB.EnvBase):
         # Explicity add the depth_linear and rgb modalities
         kwargs["robots"][0]["obs_modalities"].append("depth_linear")
         kwargs["robots"][0]["obs_modalities"].append("rgb")
-        kwargs["robots"][0]["obs_modalities"].append("seg_instance")
+        # kwargs["robots"][0]["obs_modalities"].append("seg_instance")
         
         # Setting the camera height and width here because setting it later causes issues
         kwargs["robots"][0]["sensor_config"]["VisionSensor"]["sensor_kwargs"]["image_height"] = RESOLUTION[0]
         kwargs["robots"][0]["sensor_config"]["VisionSensor"]["sensor_kwargs"]["image_width"] = RESOLUTION[1]
         kwargs["robots"][0]["sensor_config"]["VisionSensor"]["sensor_kwargs"]["horizontal_aperture"] = 25.0
 
+        # Untucked reset joint positions. The torso is different from the default R1 untucked position
         kwargs["robots"][0]["reset_joint_pos"] = [
                 0.0000,
                 0.0000,
@@ -1357,6 +1403,35 @@ class EnvOmniGibson(EB.EnvBase):
                 0.0500,
                 0.0500,
             ]
+        # Tucked reset joint positions. The torso is different from the default R1 tucked position
+        # kwargs["robots"][0]["reset_joint_pos"] = [
+        #         0.0000,
+        #         0.0000,
+        #         0.000,
+        #         0.000,
+        #         0.000,
+        #         -0.0000, # 6 virtual base joint 
+        #         0.5,
+        #         -1.0,
+        #         -0.8,
+        #         -0.0000, # 4 torso joints
+        #         -0.000,
+        #         0.000,
+        #         0.0,
+        #         0.0,
+        #         0.0,
+        #         0.0,
+        #         0.0,
+        #         0.0,
+        #         0.0,
+        #         0.0,
+        #         0.0,
+        #         0.0,
+        #         0.0500,
+        #         0.0500,
+        #         0.0500,
+        #         0.0500,
+        #     ]
 
         # Always spawn robot at the origin with no rotation (this is to be compatible with curobo)
         kwargs["robots"][0]["position"] = [0.0, 0.0, 0.0]
@@ -1379,6 +1454,8 @@ class EnvOmniGibson(EB.EnvBase):
     
     def update_params_r1_dishes_away(self, kwargs):
         kwargs["scene"]["load_room_instances"] = ["kitchen_0", "dining_room_0", "entryway_0", "living_room_0"]
+        # For the task of dishes away, we don't load the fridge
+        kwargs["scene"]["not_load_object_categories"] = ["fridge"]
         self.reset_base_pose = (kwargs["robots"][0]["position"], kwargs["robots"][0]["orientation"])
 
     def update_env_post_creation_r1_pick_cup(self):
