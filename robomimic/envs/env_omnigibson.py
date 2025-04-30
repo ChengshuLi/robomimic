@@ -20,6 +20,7 @@ from omnigibson.objects.primitive_object import PrimitiveObject
 from omnigibson.action_primitives.starter_semantic_action_primitives import StarterSemanticActionPrimitives
 from omnigibson.objects.dataset_object import DatasetObject
 from omnigibson.action_primitives.curobo import CuRoboEmbodimentSelection
+from omnigibson.controllers import ControlType
 
 # from mimicgen.train_scripts.train_prep_data import compute_point_cloud_from_rgbd
 from scipy.spatial.transform import Rotation as R
@@ -116,6 +117,8 @@ class EnvOmniGibson(EB.EnvBase):
         # execution_phase_ind keeps track of each phase that was tried to be executed (even if MP failed for that phase). This is useful for logging phase
         # specific information (which we want to do even if there is a MP failure)
         self.execution_phase_ind = 0
+        self.retry_nav_on_arm_mp_failure = False
+        self.num_nav_retry_on_arm_mp_failure = 0
 
         if self.name.startswith("r1_pick_cup"):
             self.update_params_r1_pick_cup(kwargs)
@@ -185,16 +188,19 @@ class EnvOmniGibson(EB.EnvBase):
             "camera": {"name": "JointController", "motor_type": "position", "use_delta_commands": False, "command_input_limits": None, "use_impedances": False},
         }
 
-        self.env.robots[0].reload_controllers(controller_config=controller_config)
+        self.robot = self.env.robots[0]
+        self.robot_name = self.env.robots[0].name
+        self.robot.reload_controllers(controller_config=controller_config)
 
         # Perform any post env creation setup
+        self.update_env_post_creation()
         if self.name.startswith("r1_pick_cup"):
             self.update_env_post_creation_r1_pick_cup()
+        elif self.name.startswith("r1_dishes_away"):
+            self.update_env_post_creation_r1_dishes_away()
 
         # self.env.robots[0]._grasping_mode = "sticky"
         self.env.scene.update_initial_state()
-        self.robot = self.env.robots[0]
-        self.robot_name = self.env.robots[0].name
 
         self.customize_physical_properties()
         self.sensor_info = self.sensor_setup()
@@ -1383,7 +1389,7 @@ class EnvOmniGibson(EB.EnvBase):
         kwargs["robots"][0]["sensor_config"]["VisionSensor"]["sensor_kwargs"]["image_width"] = RESOLUTION[1]
         kwargs["robots"][0]["sensor_config"]["VisionSensor"]["sensor_kwargs"]["horizontal_aperture"] = 25.0
 
-        # Untucked reset joint positions. The torso is different from the default R1 untucked position
+        # # Untucked reset joint positions. The torso is different from the default R1 untucked position
         kwargs["robots"][0]["reset_joint_pos"] = [
                 0.0000,
                 0.0000,
@@ -1412,7 +1418,7 @@ class EnvOmniGibson(EB.EnvBase):
                 0.0500,
                 0.0500,
             ]
-        # Tucked reset joint positions. The torso is different from the default R1 tucked position
+        # # Tucked reset joint positions. The torso is different from the default R1 tucked position
         # kwargs["robots"][0]["reset_joint_pos"] = [
         #         0.0000,
         #         0.0000,
@@ -1420,9 +1426,9 @@ class EnvOmniGibson(EB.EnvBase):
         #         0.000,
         #         0.000,
         #         -0.0000, # 6 virtual base joint 
-        #         0.5,
-        #         -1.0,
-        #         -0.8,
+        #         1.375 if self.real_robot_mode else 0.5,
+        #         -2.195 if self.real_robot_mode else -1.0,
+        #         -0.96 if self.real_robot_mode else -0.8,
         #         -0.0000, # 4 torso joints
         #         -0.000,
         #         0.000,
@@ -1467,6 +1473,16 @@ class EnvOmniGibson(EB.EnvBase):
         kwargs["scene"]["not_load_object_categories"] = ["fridge"]
         self.reset_base_pose = (kwargs["robots"][0]["position"], kwargs["robots"][0]["orientation"])
 
+    def update_env_post_creation(self):
+        # TODO: Remove this hardcoding and make it x% of original joint limits
+        arm_left_controller = self.robot.controllers["arm_left"]
+        arm_left_controller._control_limits[ControlType.get_type("position")][0][arm_left_controller.dof_idx] = th.tensor([-2.736,  0.081, -3.233, -2.736, -1.575, -2.736])
+        arm_left_controller._control_limits[ControlType.get_type("position")][1][arm_left_controller.dof_idx] = th.tensor([2.736,  3.148, -0.083,  2.736,  1.575, 2.736])
+        arm_right_controller = self.robot.controllers["arm_right"]
+        arm_right_controller._control_limits[ControlType.get_type("position")][0][arm_right_controller.dof_idx] = th.tensor([-2.736,  0.081, -3.233, -2.736, -1.575, -2.736])
+        arm_right_controller._control_limits[ControlType.get_type("position")][1][arm_right_controller.dof_idx] = th.tensor([2.736,  3.148, -0.083,  2.736,  1.575, 2.736])
+
+    
     def update_env_post_creation_r1_pick_cup(self):
         floor = self.env.scene.object_registry("name", "floors_ptwlei_0")
         # floor2 = self.env.scene.object_registry("name", "floors_ifmioj_0")
@@ -1479,3 +1495,9 @@ class EnvOmniGibson(EB.EnvBase):
         og.sim.play()
         og.sim.load_state(temp_state)
         og.sim.step()
+
+    def update_env_post_creation_r1_dishes_away(self):
+        shelf = self.env.scene.object_registry("name", "shelf_pfusrd_1")
+        shelf.set_position_orientation(position=th.tensor([ 7.122, -2.029,  1.403]))
+        for _ in range(5): og.sim.step()
+
