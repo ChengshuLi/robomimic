@@ -111,7 +111,11 @@ class EnvOmniGibson(EB.EnvBase):
         self.real_robot_mode = real_robot_mode
         self.init_nav_manip = False
         self.debug_from_saved_state = False
-        self.retract_type = "retract_to_canonical_pose_maintain_orn"     # Options: ["retract_to_canonical_pose", "retract_to_start_of_arm_mp"]
+        self.retract_type = "retract_to_canonical_pose"     # Options: ["retract_to_canonical_pose_maintain_orn", "retract_to_canonical_pose", "retract_to_start_of_arm_mp"]
+        self.phases_completed_wo_mp_err = 0
+        # execution_phase_ind keeps track of each phase that was tried to be executed (even if MP failed for that phase). This is useful for logging phase
+        # specific information (which we want to do even if there is a MP failure)
+        self.execution_phase_ind = 0
 
         if self.name.startswith("r1_pick_cup"):
             self.update_params_r1_pick_cup(kwargs)
@@ -306,8 +310,9 @@ class EnvOmniGibson(EB.EnvBase):
             ego_img = obs[f"{robot_name}::{robot_name}:eyes:Camera:0::rgb"].numpy()[:, :, :3]
             # eef_left_img = obs[f"{robot_name}::{robot_name}:left_eef_link:Camera:0::rgb"]
             # eef_right_img = obs[f"{robot_name}::{robot_name}:right_eef_link:Camera:0::rgb"]
-            viewer_img = og.sim.viewer_camera._get_obs()[0]['rgb'].numpy()[:, :, :3]
-            concatenated_img = hori_concatenate_image([ego_img, viewer_img])
+            # viewer_img = og.sim.viewer_camera._get_obs()[0]['rgb'].numpy()[:, :, :3]
+            external_sensor2_img = self.env._external_sensors["external_sensor2"].get_obs()[0]["rgb"][:,:,:3].numpy()
+            concatenated_img = hori_concatenate_image([ego_img, external_sensor2_img])
             video_writer.append_data(concatenated_img)
         #     for env_idx, single_env in enumerate(self.env.envs):
         #         external_obs = single_env.external_sensors["external_sensor0"].get_obs()[0]["rgb"][:,:,:3].numpy()
@@ -579,15 +584,17 @@ class EnvOmniGibson(EB.EnvBase):
             self.primitive.mp_err = "None"
             self.err = "None"
             self.obj_visible_at_start_of_manip = False
+            self.execution_phase_ind = 0
+            self.phases_completed_wo_mp_err = 0
 
         if self.debug_from_saved_state:
             import pickle
-            state = pickle.load(open("/home/arpit/test_projects/mimicgen/random_files/start_of_last_nav2.pickle", "rb"))
+            state = pickle.load(open("/home/arpit/test_projects/mimicgen/random_files/start_of_last_nav3.pickle", "rb"))
             og.sim.load_state(state)
             for _ in range(5): og.sim.step()
-            fridge = self.env.scene.object_registry("name", "fridge_dszchb_0")
-            self.env.scene.remove_object(obj=fridge)
-            for _ in range(5): og.sim.step()
+            # fridge = self.env.scene.object_registry("name", "fridge_dszchb_0")
+            # self.env.scene.remove_object(obj=fridge)
+            # for _ in range(5): og.sim.step()
 
             self.cmg.update_obstacles()
         else:
@@ -653,7 +660,7 @@ class EnvOmniGibson(EB.EnvBase):
             ext_sensor.set_position_orientation(position=th.tensor([1.9230, -0.2432,  1.4854]), orientation=th.tensor([0.3403, 0.3626, 0.6326, 0.5937]),)
         
         for _ in range(50): og.sim.step()
-        
+                
         # change to the new observation
         obs, obs_info = self.get_obs_IL()
 
@@ -810,6 +817,14 @@ class EnvOmniGibson(EB.EnvBase):
         """
         Setup the sensor position, orientation of the environment
         """
+        # Sensors used for visualization (saving videos)
+        # TODO: setup other external sensors as well in case we are using it
+        ext_sensor2 = self.env._external_sensors["external_sensor2"]
+        ext_sensor2.add_modality("rgb")
+        ext_sensor2.image_height = 720
+        ext_sensor2.image_width = 720
+
+        # Robot specific sensors, these are stored in hdf5 file by datagen and used for policy learning
         all_sensor_info = {}
         for sensor_name, sensor in self.env.robots[0].sensors.items():
             # sensor = self.env.robots[0].sensors[f"{self.robot_name}:eyes:Camera:0"]
@@ -1232,12 +1247,6 @@ class EnvOmniGibson(EB.EnvBase):
                 "bddl": success_bddl,
                 "lift": success_lift,
             })
-        # TODO: Implement this
-        elif self.name.startswith("r1_dishes_away"):
-            plate_601_obj = self.env.scene.object_registry("name", "plate_601")
-            plate_602_obj = self.env.scene.object_registry("name", "plate_602")
-            plate_603_obj = self.env.scene.object_registry("name", "plate_603")
-            result.update({"bddl": False})
 
         return result
 
