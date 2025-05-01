@@ -193,7 +193,6 @@ class EnvOmniGibson(EB.EnvBase):
         self.robot.reload_controllers(controller_config=controller_config)
 
         # Perform any post env creation setup
-        self.update_env_post_creation()
         if self.name.startswith("r1_pick_cup"):
             self.update_env_post_creation_r1_pick_cup()
         elif self.name.startswith("r1_dishes_away"):
@@ -1472,16 +1471,6 @@ class EnvOmniGibson(EB.EnvBase):
         # For the task of dishes away, we don't load the fridge
         kwargs["scene"]["not_load_object_categories"] = ["fridge"]
         self.reset_base_pose = (kwargs["robots"][0]["position"], kwargs["robots"][0]["orientation"])
-
-    def update_env_post_creation(self):
-        # TODO: Remove this hardcoding and make it x% of original joint limits
-        arm_left_controller = self.robot.controllers["arm_left"]
-        arm_left_controller._control_limits[ControlType.get_type("position")][0][arm_left_controller.dof_idx] = th.tensor([-2.736,  0.081, -3.233, -2.736, -1.575, -2.736])
-        arm_left_controller._control_limits[ControlType.get_type("position")][1][arm_left_controller.dof_idx] = th.tensor([2.736,  3.148, -0.083,  2.736,  1.575, 2.736])
-        arm_right_controller = self.robot.controllers["arm_right"]
-        arm_right_controller._control_limits[ControlType.get_type("position")][0][arm_right_controller.dof_idx] = th.tensor([-2.736,  0.081, -3.233, -2.736, -1.575, -2.736])
-        arm_right_controller._control_limits[ControlType.get_type("position")][1][arm_right_controller.dof_idx] = th.tensor([2.736,  3.148, -0.083,  2.736,  1.575, 2.736])
-
     
     def update_env_post_creation_r1_pick_cup(self):
         floor = self.env.scene.object_registry("name", "floors_ptwlei_0")
