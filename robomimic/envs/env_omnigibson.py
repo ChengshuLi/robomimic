@@ -193,7 +193,7 @@ class EnvOmniGibson(EB.EnvBase):
         self.robot.reload_controllers(controller_config=controller_config)
 
         # Perform any post env creation setup
-        self.update_env_post_creation()
+        # self.update_env_post_creation()
         if self.name.startswith("r1_pick_cup"):
             self.update_env_post_creation_r1_pick_cup()
         elif self.name.startswith("r1_dishes_away"):
@@ -597,6 +597,12 @@ class EnvOmniGibson(EB.EnvBase):
             import pickle
             state = pickle.load(open("/home/arpit/test_projects/mimicgen/random_files/start_of_last_nav3.pickle", "rb"))
             og.sim.load_state(state)
+
+            # import h5py
+            # f = h5py.File("/home/arpit/test_projects/mimicgen/datasets/generated_data_mimicgen_format/core_datasets_og/r1_dishes_away_no_joint_limit/demo_src_r1_dishes_away_task_D0/tmp_failed/date_05_01_2025_time_00_34_11.hdf5", "r")
+            # state = f["data"]["demo_0"]["states"][0]
+            # og.sim.load_state(state, serialized=True)
+
             for _ in range(5): og.sim.step()
             # fridge = self.env.scene.object_registry("name", "fridge_dszchb_0")
             # self.env.scene.remove_object(obj=fridge)
