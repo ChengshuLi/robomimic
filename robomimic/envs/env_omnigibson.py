@@ -119,6 +119,8 @@ class EnvOmniGibson(EB.EnvBase):
         self.execution_phase_ind = 0
         self.retry_nav_on_arm_mp_failure = False
         self.num_nav_retry_on_arm_mp_failure = 0
+        self.robot_reset_pos = "tuck"       # Options: ["tuck", "untuck"]
+
 
         if self.name.startswith("r1_pick_cup"):
             self.update_params_r1_pick_cup(kwargs)
@@ -176,7 +178,6 @@ class EnvOmniGibson(EB.EnvBase):
         self.obj_visible_at_start_of_manip = False
         self.IL_obs_keys = ["rgb", "depth_linear"]
         self.sampled_base_poses = {"failure": list(), "success": list()}
-        self.robot_reset_pos = "tuck"       # Options: ["tuck", "untuck"]
         
         # TODO: uncomment the following lines for data generation.
         controller_config = {
