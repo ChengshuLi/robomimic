@@ -170,12 +170,13 @@ class EnvOmniGibson(EB.EnvBase):
 
         self.env = og.Environment(configs=kwargs)
         
-        # Env parameters added by Arpit
+        # Custom env parameters
         self.valid_env = True
         self.err = "None"
         self.obj_visible_at_start_of_manip = False
         self.IL_obs_keys = ["rgb", "depth_linear"]
         self.sampled_base_poses = {"failure": list(), "success": list()}
+        self.robot_reset_pos = "tuck"       # Options: ["tuck", "untuck"]
         
         # TODO: uncomment the following lines for data generation.
         controller_config = {
@@ -1394,64 +1395,67 @@ class EnvOmniGibson(EB.EnvBase):
         kwargs["robots"][0]["sensor_config"]["VisionSensor"]["sensor_kwargs"]["image_width"] = RESOLUTION[1]
         kwargs["robots"][0]["sensor_config"]["VisionSensor"]["sensor_kwargs"]["horizontal_aperture"] = 25.0
 
-        # # Untucked reset joint positions. The torso is different from the default R1 untucked position
-        kwargs["robots"][0]["reset_joint_pos"] = [
-                0.0000,
-                0.0000,
-                0.000,
-                0.000,
-                0.000,
-                -0.0000, # 6 virtual base joint 
-                1.375 if self.real_robot_mode else 0.5,
-                -2.195 if self.real_robot_mode else -1.0,
-                -0.96 if self.real_robot_mode else -0.8,
-                -0.0000, # 4 torso joints
-                -0.000,
-                0.000,
-                1.8944,
-                1.8945,
-                -0.9848,
-                -0.9849,
-                1.5612,
-                1.5621,
-                0.9097,
-                0.9096,
-                -1.5544,
-                -1.5545,
-                0.0500,
-                0.0500,
-                0.0500,
-                0.0500,
-            ]
-        # # Tucked reset joint positions. The torso is different from the default R1 tucked position
-        # kwargs["robots"][0]["reset_joint_pos"] = [
-        #         0.0000,
-        #         0.0000,
-        #         0.000,
-        #         0.000,
-        #         0.000,
-        #         -0.0000, # 6 virtual base joint 
-        #         1.375 if self.real_robot_mode else 0.5,
-        #         -2.195 if self.real_robot_mode else -1.0,
-        #         -0.96 if self.real_robot_mode else -0.8,
-        #         -0.0000, # 4 torso joints
-        #         -0.000,
-        #         0.000,
-        #         0.0,
-        #         0.0,
-        #         0.0,
-        #         0.0,
-        #         0.0,
-        #         0.0,
-        #         0.0,
-        #         0.0,
-        #         0.0,
-        #         0.0,
-        #         0.0500,
-        #         0.0500,
-        #         0.0500,
-        #         0.0500,
-        #     ]
+        # Untucked reset joint positions. The torso is different from the default R1 untucked position
+        if self.robot_reset_pos == "untuck":
+            kwargs["robots"][0]["reset_joint_pos"] = [
+                    0.0000,
+                    0.0000,
+                    0.000,
+                    0.000,
+                    0.000,
+                    -0.0000, # 6 virtual base joint 
+                    1.375 if self.real_robot_mode else 0.5,
+                    -2.195 if self.real_robot_mode else -1.0,
+                    -0.96 if self.real_robot_mode else -0.8,
+                    -0.0000, # 4 torso joints
+                    -0.000,
+                    0.000,
+                    1.8944,
+                    1.8945,
+                    -0.9848,
+                    -0.9849,
+                    1.5612,
+                    1.5621,
+                    0.9097,
+                    0.9096,
+                    -1.5544,
+                    -1.5545,
+                    0.0500,
+                    0.0500,
+                    0.0500,
+                    0.0500,
+                ]
+        elif self.robot_reset_pos == "tuck":
+            # Tucked reset joint positions. The torso is different from the default R1 tucked position
+            kwargs["robots"][0]["reset_joint_pos"] = [
+                    0.0000,
+                    0.0000,
+                    0.000,
+                    0.000,
+                    0.000,
+                    -0.0000, # 6 virtual base joint 
+                    1.375 if self.real_robot_mode else 0.5,
+                    -2.195 if self.real_robot_mode else -1.0,
+                    -0.96 if self.real_robot_mode else -0.8,
+                    -0.0000, # 4 torso joints
+                    0.0, # left arm joint 1
+                    0.0, # right arm joint 1
+                    0.0,
+                    0.0,
+                    -0.1,
+                    -0.1,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0500,
+                    0.0500,
+                    0.0500,
+                    0.0500,
+                ] 
+
 
         # Always spawn robot at the origin with no rotation (this is to be compatible with curobo)
         kwargs["robots"][0]["position"] = [0.0, 0.0, 0.0]
