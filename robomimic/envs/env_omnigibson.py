@@ -181,7 +181,8 @@ class EnvOmniGibson(EB.EnvBase):
         self.valid_env = True
         self.err = "None"
         self.obj_visible_at_start_of_manip = False
-        self.IL_obs_keys = ["rgb", "depth_linear"]
+        self.num_frames_with_obj_visible = 0
+        self.IL_obs_keys = ["rgb", "depth_linear", "seg_instance"]
         self.sampled_base_poses = {"failure": list(), "success": list()}
         
         # TODO: uncomment the following lines for data generation.
@@ -505,7 +506,8 @@ class EnvOmniGibson(EB.EnvBase):
 
     def _randomize_object_pose_D1(self, objs):
         for obj in objs:
-            if "table" not in obj.name:
+            # if "table" not in obj.name:
+            if all(keyword not in obj.name for keyword in ["table", "shelf", "bar", "sink"]):
                 state = og.sim.dump_state()
                 while True:
                     cond = self._get_relevant_initial_condition(obj)
@@ -513,6 +515,11 @@ class EnvOmniGibson(EB.EnvBase):
                     if cond.sample(True):
                         break
                     og.sim.load_state(state)
+
+        # coffee_cup_7 = self.env.scene.object_registry("name", "coffee_cup_7")
+        # y_range = np.random.uniform(-0.2, 0.2)
+        # coffee_cup_7.set_position_orientation(position=th.tensor([ 1.523, -0.196 + y_range,  0.81]), orientation=th.tensor([     0.006,     -0.001,      0.997,     -0.079]))
+        # print("coffee_cup pos: ", [ 1.573, -0.196 + y_range,  0.81])
 
     # def _randomize_object_pose_D1(self, objs):
     #     # pos_magnitude = 0.10  # 5cm
@@ -601,6 +608,7 @@ class EnvOmniGibson(EB.EnvBase):
             self.obj_visible_at_start_of_manip = False
             self.execution_phase_ind = 0
             self.phases_completed_wo_mp_err = 0
+            self.num_frames_with_obj_visible = 0
 
         if self.debug_from_saved_state:
             import pickle
@@ -1160,6 +1168,8 @@ class EnvOmniGibson(EB.EnvBase):
             obj_states = {}
             obj_bddl_names = [obj.bddl_inst for obj in self.env._task.object_scope.values()] # get object names
             for obj_name in obj_bddl_names:
+                if self.env.task.object_scope[obj_name].og_categories[0] in ["dust"]:
+                    continue
                 # TODO: here not checking whether the object exist in the scene, may need to handle this silimar to omnigibson/tasks/behavior_task.py
                 pos, ori = self.env.task.object_scope[obj_name].get_position_orientation()
                 local_pos, local_ori = T.relative_pose_transform(pos, ori, *base_link_pose)
@@ -1186,12 +1196,14 @@ class EnvOmniGibson(EB.EnvBase):
 
         # temp_start_time = time.time()
         other_obs, info = self.get_observation(di) # get default observations
+
+
         # retain only the relevant obs keys for IL policy
         for k in other_obs.keys():
             if k.split("::")[-1] in self.IL_obs_keys:
                 if "seg" in k:
                     obs_IL[k] = other_obs[k].cpu()
-                    breakpoint()
+                    # breakpoint()
                 else:
                     obs_IL[k] = other_obs[k]
         # obs_IL.update(other_obs)
@@ -1416,7 +1428,7 @@ class EnvOmniGibson(EB.EnvBase):
         # Explicity add the depth_linear and rgb modalities
         kwargs["robots"][0]["obs_modalities"].append("depth_linear")
         kwargs["robots"][0]["obs_modalities"].append("rgb")
-        # kwargs["robots"][0]["obs_modalities"].append("seg_instance")
+        kwargs["robots"][0]["obs_modalities"].append("seg_instance")
         
         # Setting the camera height and width here because setting it later causes issues
         kwargs["robots"][0]["sensor_config"]["VisionSensor"]["sensor_kwargs"]["image_height"] = RESOLUTION[0]
@@ -1500,6 +1512,15 @@ class EnvOmniGibson(EB.EnvBase):
         #     "not_load_object_categories": ["taboret", "fridge"],
         # }
         kwargs["scene"]["load_room_instances"] = ["kitchen_0", "dining_room_0", "entryway_0", "living_room_0"]
+        kwargs["scene"]["not_load_object_categories"] = ["taboret"]
+        original_quat = kwargs["robots"][0]["orientation"]
+        rot_z_45 = R.from_euler('z', 45, degrees=True)
+        original_rot = R.from_quat(original_quat)
+        kwargs["robots"][0]["orientation"]
+        new_rot = rot_z_45 * original_rot
+        rotated_quat = new_rot.as_quat()
+        kwargs["robots"][0]["orientation"] = rotated_quat
+        
         self.reset_base_pose = (kwargs["robots"][0]["position"], kwargs["robots"][0]["orientation"])
     
     def update_params_r1_dishes_away(self, kwargs):
