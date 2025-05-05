@@ -122,7 +122,7 @@ class EnvOmniGibson(EB.EnvBase):
         self.robot_reset_pos = "tuck"       # Options: ["tuck", "untuck"]
 
         # Visibility parameters
-        self.soft_visibility_constraint = False
+        self.soft_visibility_constraint = True
         self.hard_visibility_constraint = True
 
         if self.name.startswith("r1_pick_cup"):
