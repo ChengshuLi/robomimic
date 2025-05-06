@@ -213,6 +213,8 @@ class EnvOmniGibson(EB.EnvBase):
             self.update_env_post_creation_r1_pick_cup()
         elif self.name.startswith("r1_dishes_away"):
             self.update_env_post_creation_r1_dishes_away()
+        elif self.name.startswith("r1_clean_pan"):
+            self.update_env_post_creation_r1_clean_pan()
 
         # self.env.robots[0]._grasping_mode = "sticky"
         self.env.scene.update_initial_state()
@@ -496,18 +498,27 @@ class EnvOmniGibson(EB.EnvBase):
                     obj.set_position_orientation(new_pos, new_orn)
                     for _ in range(10):
                         og.sim.step()
-                    cond = self._get_relevant_initial_condition(obj)
-                    assert cond is not None, f"Condition not found for object {obj.name}"
-                    if cond.evaluate():
+                    breakpoint()
+                    # remove later
+                    if obj.name == "scrub_brush_601":
                         break
+                    else:
+                        cond = self._get_relevant_initial_condition(obj)
+                        assert cond is not None, f"Condition not found for object {obj.name}"
+                        if cond.evaluate():
+                            break
                     og.sim.load_state(state)
 
     def _get_relevant_initial_condition(self, obj):
         for cond in self.env.task.activity_initial_conditions:
-            if self.env.task.object_scope[cond.body[1]].unwrapped == obj:
-                # cond is a HEAD condition
-                # cond.children[0] is the actual binary predicate
-                return cond.children[0]
+            try:
+                if self.env.task.object_scope[cond.body[1]].unwrapped == obj:
+                    # cond is a HEAD condition
+                    # cond.children[0] is the actual binary predicate
+                    return cond.children[0]
+            except Exception as e:
+                print(f"Error in _get_relevant_initial_condition: {e}")
+                breakpoint()
         return None
 
     def _randomize_object_pose_D1(self, objs):
@@ -1556,4 +1567,21 @@ class EnvOmniGibson(EB.EnvBase):
         shelf = self.env.scene.object_registry("name", "shelf_pfusrd_1")
         shelf.set_position_orientation(position=th.tensor([ 7.122, -2.029,  1.403]))
         for _ in range(5): og.sim.step()
+
+    def update_env_post_creation_r1_clean_pan(self):
+        # Moving the scrub away from the faucet
+        scrub_brush_601 = self.env.scene.object_registry("name", "scrub_brush_601")
+        scrub_brush_601.set_position_orientation(position=th.tensor([6.5, -1.856, 0.905]), orientation=th.tensor([0.796, -0.606, -0.001, -0.007]))
+        for _ in range(5): og.sim.step()
+
+        # Set the orn of pan
+        frying_pan_602 = self.env.scene.object_registry("name", "frying_pan_602")
+        orientation = frying_pan_602.get_position_orientation()[1]
+        rot_z = R.from_euler('z', -45, degrees=True)
+        original_rot = R.from_quat(orientation)
+        new_rot = rot_z * original_rot
+        rotated_quat = new_rot.as_quat()
+        frying_pan_602.set_position_orientation(orientation=rotated_quat)
+
+
 
