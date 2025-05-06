@@ -119,7 +119,7 @@ class EnvOmniGibson(EB.EnvBase):
         self.execution_phase_ind = 0
         self.retry_nav_on_arm_mp_failure = False
         self.num_nav_retry_on_arm_mp_failure = 0
-        self.robot_reset_pos = "tuck"       # Options: ["tuck", "untuck"]
+        self.use_base_pose_hack = False
 
         # Visibility parameters
         self.soft_visibility_constraint = True
@@ -127,12 +127,20 @@ class EnvOmniGibson(EB.EnvBase):
 
         if self.name.startswith("r1_pick_cup"):
             self.update_params_r1_pick_cup(kwargs)
+            # need to use untuck other wise real-robot joint limits make tucked version out of limit
+            self.robot_reset_pos = "untuck"       # Options: ["tuck", "untuck"]
+            if self.name.endswith("D0"):
+                self.use_base_pose_hack=True
         elif self.name.startswith("r1_tidy_table"):
             self.update_params_r1_tidy_table(kwargs)
+            self.robot_reset_pos = "tuck"       # Options: ["tuck", "untuck"]
         elif self.name.startswith("r1_dishes_away"):
             self.update_params_r1_dishes_away(kwargs)
+            self.robot_reset_pos = "tuck"       # Options: ["tuck", "untuck"]
         elif self.name.startswith("r1_clean_pan"):
             self.update_params_r1_clean_pan(kwargs)
+            self.robot_reset_pos = "untuck"       # Options: ["tuck", "untuck"]
+
         # Some general updates to kwargs. Always call this after the task specific updates in the previous lines
         self.update_kwargs(kwargs)
 
@@ -284,7 +292,7 @@ class EnvOmniGibson(EB.EnvBase):
                 curobo_batch_size=6,
                 # curobo_use_cuda_graph=not self.soft_visibility_constraint,
                 curobo_use_cuda_graph=False,
-                use_base_pose_hack=False,
+                use_base_pose_hack=self.use_base_pose_hack,
                 real_robot_mode=self.real_robot_mode,
             )
 
@@ -483,8 +491,6 @@ class EnvOmniGibson(EB.EnvBase):
                     pos_diff_xy = np.random.uniform(pos_magnitude[0], pos_magnitude[1], size=2)
                     pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
                     new_pos = pos + pos_diff
-                    # TODO： without mobile motion， the target pose need to be very carefully selected
-                    # pos += th.from_numpy(np.array([-.15, 0.0, 0]))
                     orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
                     new_orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
                     obj.set_position_orientation(new_pos, new_orn)
@@ -612,7 +618,7 @@ class EnvOmniGibson(EB.EnvBase):
 
         if self.debug_from_saved_state:
             import pickle
-            state = pickle.load(open("/home/arpit/test_projects/mimicgen/random_files/start_of_last_nav3.pickle", "rb"))
+            state = pickle.load(open("/home/arpit/test_projects/mimicgen/random_files/start_of_clean_pan.pickle", "rb"))
             og.sim.load_state(state)
 
             # import h5py
@@ -649,7 +655,7 @@ class EnvOmniGibson(EB.EnvBase):
         # else:
         #     self.env.robots[0].set_position_orientation(position=th.tensor([-0.863, -0.26, 0.0]))
 
-        # If loading a saved state, don't do randomization for all objects. Choose accodgin to what you want
+        # If loading a saved state, don't do randomization for all objects. Choose according to what you want
         if self.debug_from_saved_state:
             pass
         
@@ -1197,7 +1203,6 @@ class EnvOmniGibson(EB.EnvBase):
         # temp_start_time = time.time()
         other_obs, info = self.get_observation(di) # get default observations
 
-
         # retain only the relevant obs keys for IL policy
         for k in other_obs.keys():
             if k.split("::")[-1] in self.IL_obs_keys:
@@ -1532,6 +1537,7 @@ class EnvOmniGibson(EB.EnvBase):
     def update_params_r1_clean_pan(self, kwargs):
         kwargs["scene"]["load_room_instances"] = ["kitchen_0", "dining_room_0", "entryway_0", "living_room_0"]
         self.reset_base_pose = (kwargs["robots"][0]["position"], kwargs["robots"][0]["orientation"])
+        
     
     def update_env_post_creation_r1_pick_cup(self):
         floor = self.env.scene.object_registry("name", "floors_ptwlei_0")
