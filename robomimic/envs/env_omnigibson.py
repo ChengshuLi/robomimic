@@ -503,8 +503,6 @@ class EnvOmniGibson(EB.EnvBase):
                     obj.set_position_orientation(new_pos, new_orn)
                     for _ in range(10):
                         og.sim.step()
-                    breakpoint()
-                    # remove later
                     if obj.name == "scrub_brush_601":
                         break
                     else:
