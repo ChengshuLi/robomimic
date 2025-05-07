@@ -40,7 +40,7 @@ from omnigibson.macros import gm
 gm.USE_GPU_DYNAMICS = False
 gm.ENABLE_FLATCACHE = False
 
-DEBUG = True
+DEBUG = False
 
 class EnvErrTypes(str, Enum):
     ArmMPFailed = "ArmMPFailed"
@@ -221,6 +221,11 @@ class EnvOmniGibson(EB.EnvBase):
 
         self.customize_physical_properties()
         self.sensor_info = self.sensor_setup()
+
+        # Hide the robot eef links' visual meshes if not in debug mode
+        if not DEBUG:
+            for eef_link_name in self.robot.eef_link_names.values():
+                self.robot.links[eef_link_name].visual_meshes["VisualSphere"].visible = False
 
         # Debug visualization
         self.eef_current_marker = PrimitiveObject(
