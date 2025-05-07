@@ -1501,8 +1501,8 @@ class EnvOmniGibson(EB.EnvBase):
                     0.0, # right arm joint 1
                     0.0,
                     0.0,
-                    -0.1,
-                    -0.1,
+                    -0.15,
+                    -0.15,
                     0.0,
                     0.0,
                     0.0,
