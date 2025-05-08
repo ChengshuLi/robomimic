@@ -309,6 +309,7 @@ def create_env_for_data_processing(
     policy_rollout=False,
     manipulation_only=False,
     real_robot_mode=False,
+    baseline=None,
 ):
     """
     Creates environment for processing dataset observations and rewards.
@@ -350,6 +351,7 @@ def create_env_for_data_processing(
                                                     policy_rollout=policy_rollout,
                                                     manipulation_only=manipulation_only,
                                                     real_robot_mode=real_robot_mode,
+                                                    baseline=baseline,
                                                     **env_kwargs)
 
     # remove possibly redundant values in kwargs

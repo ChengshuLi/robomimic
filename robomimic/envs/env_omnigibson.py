@@ -100,6 +100,7 @@ class EnvOmniGibson(EB.EnvBase):
         policy_rollout=False,
         manipulation_only=False,
         real_robot_mode=False,
+        baseline=None,
         **kwargs,
     ):
         self._env_name = env_name
@@ -120,6 +121,7 @@ class EnvOmniGibson(EB.EnvBase):
         self.retry_nav_on_arm_mp_failure = False
         self.num_nav_retry_on_arm_mp_failure = 0
         self.use_base_pose_hack = False
+        self.baseline = baseline
 
         # Visibility parameters
         self.soft_visibility_constraint = True
@@ -140,6 +142,10 @@ class EnvOmniGibson(EB.EnvBase):
         elif self.name.startswith("r1_clean_pan"):
             self.update_params_r1_clean_pan(kwargs)
             self.robot_reset_pos = "untuck"       # Options: ["tuck", "untuck"]
+
+        # Since the interpolation in mimicgen does not work well with the robot tucked. This is due to subpar IK controller probably
+        if baseline == "mimicgen":
+            self.robot_reset_pos = "untuck"
 
         # Some general updates to kwargs. Always call this after the task specific updates in the previous lines
         self.update_kwargs(kwargs)
@@ -184,18 +190,29 @@ class EnvOmniGibson(EB.EnvBase):
             og.clear()
 
         self.env = og.Environment(configs=kwargs)
+
+        self.robot = self.env.robots[0]
+        self.robot_name = self.env.robots[0].name
         
         # Custom env parameters
         self.valid_env = True
         self.err = "None"
         self.obj_visible_at_start_of_manip = False
-        self.num_frames_with_obj_visible = 0
         self.IL_obs_keys = ["rgb", "depth_linear", "seg_instance"]
         self.sampled_base_poses = {"failure": list(), "success": list()}
+
+        # initializing dict for storing visibility stats
+        self.num_frames_with_obj_visible = dict()
+        for sensor_name, sensor in self.robot.sensors.items():
+            if isinstance(sensor, og.sensors.vision_sensor.VisionSensor):
+                self.num_frames_with_obj_visible[sensor_name.split(":")[1]] = 0            
         
-        # TODO: uncomment the following lines for data generation.
+        base_controller_cfg = {"name": "HolonomicBaseJointController", "motor_type": "position", "command_input_limits": None, "use_impedances": False}
+        # Since the data was collected in velocity mode, we need to set the controller to velocity mode for baselines which repeat the base motion
+        if self.baseline:
+            base_controller_cfg = {"name": "HolonomicBaseJointController", "motor_type": "velocity", "command_input_limits": (-1.0, 1.0), "command_output_limits": ((-0.75, -0.75, -1.0), (0.75, 0.75, 1.0)), "use_impedances": False}
         controller_config = {
-            "base": {"name": "HolonomicBaseJointController", "motor_type": "position", "command_input_limits": None, "use_impedances": False},
+            "base": base_controller_cfg ,
             "trunk": {"name": "JointController", "motor_type": "position", "use_delta_commands": False, "command_input_limits": None, "use_impedances": False},
             "arm_left": {"name": "JointController", "motor_type": "position", "use_delta_commands": False, "command_input_limits": None, "use_impedances": False},
             "arm_right": {"name": "JointController", "motor_type": "position", "use_delta_commands": False, "command_input_limits": None, "use_impedances": False},
@@ -203,9 +220,6 @@ class EnvOmniGibson(EB.EnvBase):
             "gripper_right": {"name": "MultiFingerGripperController", "mode": "binary", "command_input_limits": (0.0, 1.0),},
             "camera": {"name": "JointController", "motor_type": "position", "use_delta_commands": False, "command_input_limits": None, "use_impedances": False},
         }
-
-        self.robot = self.env.robots[0]
-        self.robot_name = self.env.robots[0].name
         self.robot.reload_controllers(controller_config=controller_config)
 
         # Perform any post env creation setup
@@ -503,13 +517,10 @@ class EnvOmniGibson(EB.EnvBase):
                     obj.set_position_orientation(new_pos, new_orn)
                     for _ in range(10):
                         og.sim.step()
-                    if obj.name == "scrub_brush_601":
+                    cond = self._get_relevant_initial_condition(obj)
+                    assert cond is not None, f"Condition not found for object {obj.name}"
+                    if cond.evaluate():
                         break
-                    else:
-                        cond = self._get_relevant_initial_condition(obj)
-                        assert cond is not None, f"Condition not found for object {obj.name}"
-                        if cond.evaluate():
-                            break
                     og.sim.load_state(state)
 
     def _get_relevant_initial_condition(self, obj):
@@ -628,7 +639,6 @@ class EnvOmniGibson(EB.EnvBase):
             self.obj_visible_at_start_of_manip = False
             self.execution_phase_ind = 0
             self.phases_completed_wo_mp_err = 0
-            self.num_frames_with_obj_visible = 0
 
         if self.debug_from_saved_state:
             import pickle
@@ -1532,13 +1542,15 @@ class EnvOmniGibson(EB.EnvBase):
         # }
         kwargs["scene"]["load_room_instances"] = ["kitchen_0", "dining_room_0", "entryway_0", "living_room_0"]
         kwargs["scene"]["not_load_object_categories"] = ["taboret"]
-        original_quat = kwargs["robots"][0]["orientation"]
-        rot_z_45 = R.from_euler('z', 45, degrees=True)
-        original_rot = R.from_quat(original_quat)
-        kwargs["robots"][0]["orientation"]
-        new_rot = rot_z_45 * original_rot
-        rotated_quat = new_rot.as_quat()
-        kwargs["robots"][0]["orientation"] = rotated_quat
+        # NOTE: in mimicgen/skillgen we are reaplying the exact same base pose. So, we need the init robot pose to be the same as that in source demo
+        if self.baseline not in ["mimicgen", "skillgen"]:
+            original_quat = kwargs["robots"][0]["orientation"]
+            rot_z_45 = R.from_euler('z', 45, degrees=True)
+            original_rot = R.from_quat(original_quat)
+            kwargs["robots"][0]["orientation"]
+            new_rot = rot_z_45 * original_rot
+            rotated_quat = new_rot.as_quat()
+            kwargs["robots"][0]["orientation"] = rotated_quat
         
         self.reset_base_pose = (kwargs["robots"][0]["position"], kwargs["robots"][0]["orientation"])
     
