@@ -1531,7 +1531,10 @@ class EnvOmniGibson(EB.EnvBase):
         kwargs["robots"][0]["orientation"] = [0.0, 0.0, 0.0, 1.0]
 
     def update_params_r1_pick_cup(self, kwargs):
-        self.reset_base_pose = (th.tensor([-0.863, -0.26, 0]), th.tensor([0.0, 0.0, 0.0, 1.0]))
+        if self.baseline in ["mimicgen", "skillgen"]:
+            self.reset_base_pose = (th.tensor(kwargs["robots"][0]["position"]) + th.tensor([1.0, 0.0, 0.0]), kwargs["robots"][0]["orientation"])
+        else:
+            self.reset_base_pose = (th.tensor([-0.863, -0.26, 0]), th.tensor([0.0, 0.0, 0.0, 1.0]))
 
     def update_params_r1_tidy_table(self, kwargs):
         # kwargs["scene"] = {
