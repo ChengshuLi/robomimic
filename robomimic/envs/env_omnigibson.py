@@ -122,6 +122,7 @@ class EnvOmniGibson(EB.EnvBase):
         self.num_nav_retry_on_arm_mp_failure = 0
         self.use_base_pose_hack = False
         self.baseline = baseline
+        self.check_upright = ["pot_plant"]
 
         # Visibility parameters
         self.soft_visibility_constraint = True
@@ -222,9 +223,15 @@ class EnvOmniGibson(EB.EnvBase):
         }
         self.robot.reload_controllers(controller_config=controller_config)
 
+        # add distractor objects if D2
+        if self.name.endswith("D2"):
+            self.distractor_objects = list()
+
         # Perform any post env creation setup
         if self.name.startswith("r1_pick_cup"):
             self.update_env_post_creation_r1_pick_cup()
+        elif self.name.startswith("r1_tidy_table"):
+            self.update_env_post_creation_r1_tidy_table()
         elif self.name.startswith("r1_dishes_away"):
             self.update_env_post_creation_r1_dishes_away()
         elif self.name.startswith("r1_clean_pan"):
@@ -552,6 +559,122 @@ class EnvOmniGibson(EB.EnvBase):
         # coffee_cup_7.set_position_orientation(position=th.tensor([ 1.523, -0.196 + y_range,  0.81]), orientation=th.tensor([     0.006,     -0.001,      0.997,     -0.079]))
         # print("coffee_cup pos: ", [ 1.573, -0.196 + y_range,  0.81])
 
+    
+    def _randomize_object_pose_D2(self, objs):
+        success = False
+        restart = False
+        init_state = og.sim.dump_state()
+        
+        # We keep an outer loop because there is the following case: 
+        # - randomizing task-relvant object works
+        # - randomizing obstacle gets stuck and is unable to find a valid solution
+        # So we give up, re-sample the task relevant objects and start again
+        while True:
+            print("success: ", success)
+            if success:
+                # D1 randomization for task relevant objects and D2 randomizatin for distractor objects successful
+                print("D2 randomization success")
+                return
+
+            # D1 randomization for task relevant objects
+            self._randomize_object_pose_D1(objs)
+            
+            # Sampling random object poses using custom thresholds
+            if self.name.startswith("r1_pick_cup"):
+                pos_max_nav = [-1.0, 1.0] 
+                pos_min_nav = [-0.2, 0.2] 
+                pos_manip = [-0.4, 0.4]
+            elif self.name.startswith("r1_tidy_table"):
+                pos_max_nav = [-0.7, 0.7] # To keep the nav object close to the kitchen island
+                pos_min_nav = [-0.1, 0.1] 
+                pos_manip = [-0.5, 0.5]
+            
+            for distractor_obj in self.distractor_objects:
+                success = False
+                state = og.sim.dump_state()
+                associated_furniture_obj = self.env.scene.object_registry("name", distractor_obj["associated_furniture"])
+                associated_task_obj = self.env.scene.object_registry("name", distractor_obj["associated_task_obj"])
+                associated_task_obj_pos = associated_task_obj.get_position_orientation()[0]
+                distractor_obj["obj"].states[object_states.OnTop].set_value(other=associated_furniture_obj, new_value=True)
+                for _ in range(10): og.sim.step()
+                sampled_pos, _ = distractor_obj["obj"].get_position_orientation()
+                # if distractor_obj["obj"].name == "gift_box":
+                #     breakpoint()
+                start_time = time.time()
+                while True:
+                    
+                    # If timeout occurs for randomizing any of the obstacle it's probably unlikely to succeed (I think this is an OG bug), 
+                    # So we give up, re-sample the task relevant objects and start again
+                    if time.time() - start_time > 10:
+                        print("Timeout while sampling object poses for {}".format(distractor_obj["obj"].name))
+                        restart = True
+                        og.sim.load_state(state)
+                        break
+                    
+                    close_by_pos = th.zeros(3)
+                    if distractor_obj["obstacle_for"] == "navigation":
+                        delta_x_pos = np.random.uniform(pos_max_nav[0], pos_min_nav[0]) if np.random.rand() < 0.5 else np.random.uniform(pos_min_nav[1], pos_max_nav[1])
+                        delta_y_pos = np.random.uniform(pos_max_nav[0], pos_min_nav[0]) if np.random.rand() < 0.5 else np.random.uniform(pos_min_nav[1], pos_max_nav[1])
+                    elif distractor_obj["obstacle_for"] == "manipulation":
+                        delta_x_pos = np.random.uniform(pos_manip[0], pos_manip[1])
+                        delta_y_pos = np.random.uniform(pos_manip[0], pos_manip[1])
+                    close_by_pos[0] = associated_task_obj_pos[0] + delta_x_pos
+                    close_by_pos[1] = associated_task_obj_pos[1] + delta_y_pos
+                    close_by_pos[2] = sampled_pos[2] # Use the z position from the OG sampling
+                    # print("close_by_pos", close_by_pos)
+
+                    # sample random orientation along +z axis
+                    sampled_orn_euler = np.array([0.0, 0.0, np.random.uniform(-np.pi, np.pi)])
+                    sampled_orn = R.from_euler('xyz', sampled_orn_euler, degrees=False).as_quat()
+
+                    close_by_pos_raised_z = close_by_pos.clone()
+                    # lift up a bit so after 1 physics step, there is still no contact
+                    close_by_pos_raised_z[2] += 0.03
+                    distractor_obj["obj"].set_position_orientation(close_by_pos_raised_z, sampled_orn)
+                    # this is faster than og.sim.step()
+                    og.sim.step_physics()
+                                    
+                    no_contact = len(distractor_obj["obj"].states[object_states.ContactBodies].get_value()) == 0
+                    # print("no_contact: ", no_contact)
+                    
+                    # # remove later
+                    # for _ in range(50): og.sim.step()
+                    
+                    if not no_contact:
+                        og.sim.load_state(state)
+                        continue
+                    for _ in range(5): og.sim.step()
+                    # But after 5 env steps, there should be contacts, and OnTop should return True!
+                    # print("OnTop: ", distractor_obj["obj"].states[object_states.OnTop].get_value(associated_furniture_obj))
+                    if not distractor_obj["obj"].states[object_states.OnTop].get_value(associated_furniture_obj):
+                        og.sim.load_state(state)
+                        continue
+                    
+                    # distractor object sampled correctly
+                    print("D2 randomization success for {}".format(distractor_obj["obj"].name))
+                    success = True
+                    break
+            
+                # This means we want to try resampling the task-relevant object (using D1) and then re-sampling the distractor object
+                if restart:
+                    og.sim.load_state(init_state)
+                    for _ in range(5): og.sim.step()
+                    restart = False
+                    break
+
+    def check_object_upright(self, obj):
+        q = obj.get_position_orientation()[1]
+        r = R.from_quat(q)
+
+        # Rotate the up vector
+        up_rotated = r.apply([0, 0, 1])
+        z_alignment = up_rotated[2]  # should be close to 1 if not toppled
+
+        threshold = 0.995  # cos(small angle) ~1
+        upright = z_alignment > threshold
+        
+        return upright
+    
     # def _randomize_object_pose_D1(self, objs):
     #     # pos_magnitude = 0.10  # 5cm
     #     # rot_magnitude = np.pi / 12  # 15 degrees
@@ -698,7 +821,6 @@ class EnvOmniGibson(EB.EnvBase):
 
         # D1 is randomization all over the furniture
         elif self.name.endswith("D1"):
-            # # for arm role change
             task_relevant_objs = self._get_task_relevant_objs()
             self._randomize_object_pose_D1(task_relevant_objs)
 
@@ -712,7 +834,39 @@ class EnvOmniGibson(EB.EnvBase):
 
         # D2 has ranomization with obstacles
         elif self.name.endswith("D2"):
-            pass
+            task_relevant_objs = self._get_task_relevant_objs()
+            init_state = og.sim.dump_state()
+            start_time = time.time()
+            
+            retry = False
+            while True:
+                self._randomize_object_pose_D2(task_relevant_objs)
+
+                # loop a few sim steps to make sure the objects are in a stable state
+                for _ in range(30): og.sim.step()
+
+                # Some objects have suboptimal COM (like pot_plan), we want to make sure they're upright
+                all_object_names = [obj.name for obj in self.env.scene.objects]
+                for obj_name in all_object_names:
+                    if obj_name in self.check_upright:
+                        obj = self.env.scene.object_registry("name", obj_name)
+                        upright = self.check_object_upright(obj)
+                        print("object, upright: ", obj.name, upright)
+                        if not upright:
+                            print(f"Object {obj.name} is not upright, randomizing again")
+                            retry = True
+                            break
+                if retry:
+                    retry = False
+                    # breakpoint()
+                    og.sim.load_state(init_state)
+                    for _ in range(5): og.sim.step()
+                    # breakpoint()
+                    continue
+                else:
+                    break
+
+            print("D2 Randomization time: ", time.time() - start_time)
         else:
             raise ValueError(f"Unknown environment name: {self.name}")
 
@@ -1536,13 +1690,10 @@ class EnvOmniGibson(EB.EnvBase):
         else:
             self.reset_base_pose = (th.tensor([-0.863, -0.26, 0]), th.tensor([0.0, 0.0, 0.0, 1.0]))
 
+        # if self.name.endswith("D2"):
+        #     kwargs["scene"]["load_object_categories"].append("straight_chair")
+
     def update_params_r1_tidy_table(self, kwargs):
-        # kwargs["scene"] = {
-        #     "type": "InteractiveTraversableScene",
-        #     "scene_model": "house_single_floor",
-        #     "load_room_instances": ["kitchen_0", "dining_room_0", "entryway_0", "living_room_0"],
-        #     "not_load_object_categories": ["taboret", "fridge"],
-        # }
         kwargs["scene"]["load_room_instances"] = ["kitchen_0", "dining_room_0", "entryway_0", "living_room_0"]
         kwargs["scene"]["not_load_object_categories"] = ["taboret"]
         # NOTE: in mimicgen/skillgen we are reaplying the exact same base pose. So, we need the init robot pose to be the same as that in source demo
@@ -1556,6 +1707,7 @@ class EnvOmniGibson(EB.EnvBase):
             kwargs["robots"][0]["orientation"] = rotated_quat
         
         self.reset_base_pose = (kwargs["robots"][0]["position"], kwargs["robots"][0]["orientation"])
+
     
     def update_params_r1_dishes_away(self, kwargs):
         kwargs["scene"]["load_room_instances"] = ["kitchen_0", "dining_room_0", "entryway_0", "living_room_0"]
@@ -1581,6 +1733,223 @@ class EnvOmniGibson(EB.EnvBase):
         og.sim.load_state(temp_state)
         og.sim.step()
 
+        if self.name.endswith("D2"):
+            distractor_objects = []
+            
+            obj = DatasetObject(
+                name="pot_plant",
+                category="pot_plant",
+                model="mqhlkf",
+                # model="udqjui",
+            )
+            distractor_objects.append(obj)
+            distractor_object = dict(
+                obj=obj,
+                associated_furniture="floors_ptwlei_0",
+                associated_task_obj="coffee_cup_7",
+                obstacle_for="navigation"
+            )
+            self.distractor_objects.append(distractor_object)
+            
+            obj = DatasetObject(
+                name="straight_chair_0",
+                category="straight_chair",
+                model="amgwaw",
+                # For some reason, this pose does not work!
+                position=th.tensor([5.0,  0.0028,  0.4485]), 
+                orientation=th.tensor([ 0.0016,  0.0020, -0.1448,  0.9895])
+            )
+            distractor_objects.append(obj)
+            distractor_object = dict(
+                obj=obj,
+                associated_furniture="floors_ptwlei_0",
+                associated_task_obj="coffee_cup_7",
+                obstacle_for="navigation",
+            )
+            self.distractor_objects.append(distractor_object)
+
+            # obj = DatasetObject(
+            #     name="floor_lamp",
+            #     category="floor_lamp",
+            #     model="vdxlda",
+            # )
+            obj = DatasetObject(
+                name="straight_chair_1",
+                category="straight_chair",
+                model="amgwaw",
+            )
+            distractor_objects.append(obj)
+            distractor_object = dict(
+                obj=obj,
+                associated_furniture="floors_ptwlei_0",
+                associated_task_obj="coffee_cup_7",
+                obstacle_for="navigation"
+            )
+            self.distractor_objects.append(distractor_object)
+
+            obj = DatasetObject(
+                name="gift_box",
+                category="gift_box",
+                model="mfalrc",
+            )
+            distractor_objects.append(obj)
+            distractor_object = dict(
+                obj=obj,
+                associated_furniture="breakfast_table_6",
+                associated_task_obj="coffee_cup_7",
+                obstacle_for="manipulation"
+            )
+            self.distractor_objects.append(distractor_object)
+
+            # Load the objects into the scene
+            og.sim.batch_add_objects(distractor_objects, [self.env.scene] * len(distractor_objects))
+            
+            # Set object pose to ensure no collision at spawn time
+            x_pos = 5.0
+            for distractor_object in distractor_objects:
+                x_pos += 1.0
+                distractor_object.set_position_orientation(position=th.tensor([x_pos,  0.0,  0.0]))
+            og.sim.step()
+
+
+    def update_env_post_creation_r1_tidy_table(self):
+        if self.name.endswith("D2"):        
+            distractor_objects = []
+    
+            obj = DatasetObject(
+                name="vacuum",
+                category="vacuum",
+                model="bdmsbr",
+                scale=th.tensor([1.0, 1.0, 1.5]),
+            )
+            distractor_objects.append(obj)
+            distractor_object = dict(
+                obj=obj,
+                associated_furniture="floors_kxcpgy_0",
+                associated_task_obj="drop_in_sink_awvzkn_0",
+                obstacle_for="navigation"
+            )
+            self.distractor_objects.append(distractor_object)
+            
+            obj = DatasetObject(
+                name="trash_can",
+                category="trash_can",
+                model="vasiit",
+            )
+            distractor_objects.append(obj)
+            distractor_object = dict(
+                obj=obj,
+                associated_furniture="floors_kxcpgy_0",
+                associated_task_obj="drop_in_sink_awvzkn_0",
+                obstacle_for="navigation",
+            )
+            self.distractor_objects.append(distractor_object)
+
+            # obj = DatasetObject(
+            #     name="floor_lamp",
+            #     category="floor_lamp",
+            #     model="jqsuky",
+            #     scale=th.tensor([1.0, 1.0, 1.5]),
+            # )
+            # distractor_objects.append(obj)
+            # distractor_object = dict(
+            #     obj=obj,
+            #     associated_furniture="floors_kxcpgy_0",
+            #     associated_task_obj="teacup_601",
+            #     obstacle_for="navigation"
+            # )
+            # self.distractor_objects.append(distractor_object)
+
+            obj = DatasetObject(
+                name="pot_plant",
+                category="pot_plant",
+                model="cqqyzp",
+                scale=th.tensor([1.3, 1.3, 1.3]),
+            )
+            distractor_objects.append(obj)
+            distractor_object = dict(
+                obj=obj,
+                associated_furniture="bar_udatjt_0",
+                associated_task_obj="teacup_601",
+                obstacle_for="manipulation"
+            )
+            self.distractor_objects.append(distractor_object)
+
+            # obj = DatasetObject(
+            #     name="pot_plant_2",
+            #     category="pot_plant",
+            #     model="cqqyzp",
+            #     scale=th.tensor([1.3, 1.3, 1.3]),
+            # )
+            # distractor_objects.append(obj)
+            # distractor_object = dict(
+            #     obj=obj,
+            #     associated_furniture="bar_udatjt_0",
+            #     associated_task_obj="teacup_601",
+            #     obstacle_for="manipulation"
+            # )
+            # self.distractor_objects.append(distractor_object)
+
+            obj = DatasetObject(
+                name="wine_bottle",
+                category="wine_bottle",
+                model="inkqch",
+            )
+            distractor_objects.append(obj)
+            distractor_object = dict(
+                obj=obj,
+                associated_furniture="bar_udatjt_0",
+                associated_task_obj="teacup_601",
+                obstacle_for="manipulation"
+            )
+            self.distractor_objects.append(distractor_object)
+
+            obj = DatasetObject(
+                name="laptop",
+                category="laptop",
+                model="izydvb",
+            )
+            distractor_objects.append(obj)
+            distractor_object = dict(
+                obj=obj,
+                associated_furniture="bar_udatjt_0",
+                associated_task_obj="teacup_601",
+                obstacle_for="manipulation"
+            )
+            self.distractor_objects.append(distractor_object)
+
+            obj = DatasetObject(
+                name="loudspeaker",
+                category="loudspeaker",
+                model="fsyioq",
+            )
+            distractor_objects.append(obj)
+            distractor_object = dict(
+                obj=obj,
+                associated_furniture="bar_udatjt_0",
+                associated_task_obj="teacup_601",
+                obstacle_for="manipulation"
+            )
+            self.distractor_objects.append(distractor_object)
+
+            state = og.sim.dump_state()
+            og.sim.stop()
+            # Load the objects into the scene
+            og.sim.batch_add_objects(distractor_objects, [self.env.scene] * len(distractor_objects))
+            og.sim.play()
+            og.sim.load_state(state)
+            
+            # Set object pose to ensure no collision at spawn time
+            x_pos = 5.0
+            for distractor_object in distractor_objects:
+                x_pos += 1.0
+                distractor_object.set_position_orientation(position=th.tensor([x_pos,  0.0,  0.0]))
+                # Open the laptop
+                if distractor_object.name == "laptop":
+                    distractor_object.joints["j_screen"].set_pos(1.0, normalized=True)
+            og.sim.step()
+
+    
     def update_env_post_creation_r1_dishes_away(self):
         shelf = self.env.scene.object_registry("name", "shelf_pfusrd_1")
         shelf.set_position_orientation(position=th.tensor([ 7.122, -2.029,  1.403]))
