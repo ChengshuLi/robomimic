@@ -1713,6 +1713,12 @@ class EnvOmniGibson(EB.EnvBase):
         kwargs["scene"]["load_room_instances"] = ["kitchen_0", "dining_room_0", "entryway_0", "living_room_0"]
         # For the task of dishes away, we don't load the fridge
         kwargs["scene"]["not_load_object_categories"] = ["fridge"]
+        if self.baseline not in ["mimicgen", "skillgen"]:
+            # kwargs["robots"][0]["position"] = [4.1, 1.7, kwargs["robots"][0]["position"][2]]
+            # kwargs["robots"][0]["orientation"] = R.from_euler('z', -1.1, degrees=False).as_quat().tolist()
+            kwargs["robots"][0]["position"] = [5.4, 1.7, kwargs["robots"][0]["position"][2]]
+            kwargs["robots"][0]["orientation"] = R.from_euler('z', -2.3, degrees=False).as_quat().tolist()
+        
         self.reset_base_pose = (kwargs["robots"][0]["position"], kwargs["robots"][0]["orientation"])
 
     def update_params_r1_clean_pan(self, kwargs):
