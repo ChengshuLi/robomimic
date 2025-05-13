@@ -140,6 +140,10 @@ class EnvOmniGibson(EB.EnvBase):
         elif self.name.startswith("r1_dishes_away"):
             self.update_params_r1_dishes_away(kwargs)
             self.robot_reset_pos = "tuck"       # Options: ["tuck", "untuck"]
+            # With tucked and without hard visibility constraint there are a lot of self-collion or bound violations because of the robot mostly manipulating the
+            # object in weird poses, so we make it untucked
+            if not self.hard_visibility_constraint:
+                self.robot_reset_pos = "untuck"
         elif self.name.startswith("r1_clean_pan"):
             self.update_params_r1_clean_pan(kwargs)
             self.robot_reset_pos = "untuck"       # Options: ["tuck", "untuck"]
@@ -553,6 +557,14 @@ class EnvOmniGibson(EB.EnvBase):
                     if cond.sample(True):
                         break
                     og.sim.load_state(state)
+                    
+                # for scrub, we need to ensure that the handle part is facing upwards
+                if obj.name == "scrub_brush_601":
+                    _, scrub_orn = obj.get_position_orientation()
+                    orn_diff = th.from_numpy(np.array([np.pi, 0.0, 0.0]))
+                    new_orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(scrub_orn))
+                    obj.set_position_orientation(orientation=new_orn)
+                    for _ in range(5): og.sim.step()
 
         # coffee_cup_7 = self.env.scene.object_registry("name", "coffee_cup_7")
         # y_range = np.random.uniform(-0.2, 0.2)
@@ -585,6 +597,10 @@ class EnvOmniGibson(EB.EnvBase):
                 pos_min_nav = [-0.2, 0.2] 
                 pos_manip = [-0.4, 0.4]
             elif self.name.startswith("r1_tidy_table"):
+                pos_max_nav = [-0.7, 0.7] # To keep the nav object close to the kitchen island
+                pos_min_nav = [-0.1, 0.1] 
+                pos_manip = [-0.5, 0.5]
+            elif self.name.startswith("r1_clean_pan"):
                 pos_max_nav = [-0.7, 0.7] # To keep the nav object close to the kitchen island
                 pos_min_nav = [-0.1, 0.1] 
                 pos_manip = [-0.5, 0.5]
@@ -1723,8 +1739,13 @@ class EnvOmniGibson(EB.EnvBase):
 
     def update_params_r1_clean_pan(self, kwargs):
         kwargs["scene"]["load_room_instances"] = ["kitchen_0", "dining_room_0", "entryway_0", "living_room_0"]
-        self.reset_base_pose = (kwargs["robots"][0]["position"], kwargs["robots"][0]["orientation"])
+        if self.baseline not in ["mimicgen", "skillgen"]:
+            # kwargs["robots"][0]["position"] = [4.1, 1.7, kwargs["robots"][0]["position"][2]]
+            # kwargs["robots"][0]["orientation"] = R.from_euler('z', -1.1, degrees=False).as_quat().tolist()
+            kwargs["robots"][0]["position"] = [5.4, 1.7, kwargs["robots"][0]["position"][2]]
+            kwargs["robots"][0]["orientation"] = R.from_euler('z', -2.3, degrees=False).as_quat().tolist()
         
+        self.reset_base_pose = (kwargs["robots"][0]["position"], kwargs["robots"][0]["orientation"])
     
     def update_env_post_creation_r1_pick_cup(self):
         floor = self.env.scene.object_registry("name", "floors_ptwlei_0")
@@ -1967,7 +1988,7 @@ class EnvOmniGibson(EB.EnvBase):
         scrub_brush_601.set_position_orientation(position=th.tensor([6.5, -1.856, 0.905]), orientation=th.tensor([0.796, -0.606, -0.001, -0.007]))
         for _ in range(5): og.sim.step()
 
-        # Set the orn of pan
+        # Set the default orn of pan (around which D0 will sample)
         frying_pan_602 = self.env.scene.object_registry("name", "frying_pan_602")
         orientation = frying_pan_602.get_position_orientation()[1]
         rot_z = R.from_euler('z', -45, degrees=True)
@@ -1975,6 +1996,147 @@ class EnvOmniGibson(EB.EnvBase):
         new_rot = rot_z * original_rot
         rotated_quat = new_rot.as_quat()
         frying_pan_602.set_position_orientation(orientation=rotated_quat)
+
+        if self.name.endswith("D2"):        
+            distractor_objects = []
+    
+            # obj = DatasetObject(
+            #     name="vacuum",
+            #     category="vacuum",
+            #     model="bdmsbr",
+            #     scale=th.tensor([1.0, 1.0, 1.5]),
+            # )
+            # distractor_objects.append(obj)
+            # distractor_object = dict(
+            #     obj=obj,
+            #     associated_furniture="floors_kxcpgy_0",
+            #     associated_task_obj="frying_pan_602",
+            #     obstacle_for="navigation"
+            # )
+            # self.distractor_objects.append(distractor_object)
+            
+            # obj = DatasetObject(
+            #     name="trash_can",
+            #     category="trash_can",
+            #     model="vasiit",
+            # )
+            # distractor_objects.append(obj)
+            # distractor_object = dict(
+            #     obj=obj,
+            #     associated_furniture="floors_kxcpgy_0",
+            #     associated_task_obj="scrub_brush_601",
+            #     obstacle_for="navigation",
+            # )
+            # self.distractor_objects.append(distractor_object)
+
+            # obj = DatasetObject(
+            #     name="floor_lamp",
+            #     category="floor_lamp",
+            #     model="jqsuky",
+            #     scale=th.tensor([1.0, 1.0, 1.5]),
+            # )
+            # distractor_objects.append(obj)
+            # distractor_object = dict(
+            #     obj=obj,
+            #     associated_furniture="floors_kxcpgy_0",
+            #     associated_task_obj="teacup_601",
+            #     obstacle_for="navigation"
+            # )
+            # self.distractor_objects.append(distractor_object)
+
+            # barbecue_sauce_bottle-gfxrnj
+            # bottle_of_beer-mljzrl
+            # bowl-wtepsx
+            # bowl-tvtive
+            # can_of_oatmeal-qyukhm
+
+            obj = DatasetObject(
+                name="instant_pot",
+                category="instant_pot",
+                model="wengzf",
+                scale=th.tensor([0.5, 0.5, 0.5]),
+            )
+            distractor_objects.append(obj)
+            distractor_object = dict(
+                obj=obj,
+                associated_furniture="bar_gjeoer_0",
+                associated_task_obj="frying_pan_602",
+                obstacle_for="manipulation"
+            )
+            self.distractor_objects.append(distractor_object)
+
+            obj = DatasetObject(
+                name="can_of_oatmeal",
+                category="can_of_oatmeal",
+                model="qyukhm",
+            )
+            distractor_objects.append(obj)
+            distractor_object = dict(
+                obj=obj,
+                associated_furniture="bar_rkgjer_0",
+                associated_task_obj="scrub_brush_601",
+                obstacle_for="manipulation"
+            )
+            self.distractor_objects.append(distractor_object)
+
+            obj = DatasetObject(
+                name="wine_bottle",
+                category="wine_bottle",
+                model="inkqch",
+            )
+            distractor_objects.append(obj)
+            distractor_object = dict(
+                obj=obj,
+                associated_furniture="bar_gjeoer_0",
+                associated_task_obj="frying_pan_602",
+                obstacle_for="manipulation"
+            )
+            self.distractor_objects.append(distractor_object)
+
+            obj = DatasetObject(
+                name="bowl_1",
+                category="bowl",
+                model="wtepsx",
+            )
+            distractor_objects.append(obj)
+            distractor_object = dict(
+                obj=obj,
+                associated_furniture="bar_rkgjer_0",
+                associated_task_obj="scrub_brush_601",
+                obstacle_for="manipulation"
+            )
+            self.distractor_objects.append(distractor_object)
+
+            obj = DatasetObject(
+                name="bowl_2",
+                category="bowl",
+                model="tvtive",
+            )
+            distractor_objects.append(obj)
+            distractor_object = dict(
+                obj=obj,
+                associated_furniture="bar_rkgjer_0",
+                associated_task_obj="scrub_brush_601",
+                obstacle_for="manipulation"
+            )
+            self.distractor_objects.append(distractor_object)
+
+            state = og.sim.dump_state()
+            og.sim.stop()
+            # Load the objects into the scene
+            og.sim.batch_add_objects(distractor_objects, [self.env.scene] * len(distractor_objects))
+            og.sim.play()
+            og.sim.load_state(state)
+            
+            # Set object pose to ensure no collision at spawn time
+            x_pos = 5.0
+            for distractor_object in distractor_objects:
+                x_pos += 1.0
+                distractor_object.set_position_orientation(position=th.tensor([x_pos,  0.0,  0.0]))
+                # Open the laptop
+                if distractor_object.name == "laptop":
+                    distractor_object.joints["j_screen"].set_pos(1.0, normalized=True)
+            og.sim.step()
 
 
 
