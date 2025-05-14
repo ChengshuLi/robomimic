@@ -123,6 +123,7 @@ class EnvOmniGibson(EB.EnvBase):
         self.use_base_pose_hack = False
         self.baseline = baseline
         self.check_upright = ["pot_plant"]
+        self.start_nav_step = 0
 
         # Visibility parameters
         self.soft_visibility_constraint = True
@@ -144,6 +145,11 @@ class EnvOmniGibson(EB.EnvBase):
             # object in weird poses, so we make it untucked
             if not self.hard_visibility_constraint:
                 self.robot_reset_pos = "untuck"
+
+            # The human teleporting is not doing anything for the first n steps
+            if baseline in ["mimicgen", "skillgen"]:
+                self.start_nav_step = 700
+
         elif self.name.startswith("r1_clean_pan"):
             self.update_params_r1_clean_pan(kwargs)
             self.robot_reset_pos = "untuck"       # Options: ["tuck", "untuck"]
@@ -514,6 +520,10 @@ class EnvOmniGibson(EB.EnvBase):
             pos_magnitude = [-0.15, 0.15] 
             rot_magnitude = np.pi / 12  # 15 degrees
 
+        # pan = self.env.scene.object_registry("name", "frying_pan_602")
+        # pan.set_position_orientation(th.tensor([5.2, -1.8, 0.908]), th.tensor([    -0.000,      0.000,     -0.499,      0.866]))
+        # for _ in range(10): og.sim.step()
+        # breakpoint()
 
         for obj in objs:
             if all(keyword not in obj.name for keyword in ["table", "shelf", "bar", "sink"]):
@@ -566,6 +576,11 @@ class EnvOmniGibson(EB.EnvBase):
                     obj.set_position_orientation(orientation=new_orn)
                     for _ in range(5): og.sim.step()
 
+        # # remove later
+        # pan = self.env.scene.object_registry("name", "frying_pan_602")
+        # pan.set_position_orientation(th.tensor([5.2, -1.8, 0.908]), th.tensor([    -0.000,      0.000,     -0.499,      0.866]))
+        # for _ in range(5): og.sim.step()
+        
         # coffee_cup_7 = self.env.scene.object_registry("name", "coffee_cup_7")
         # y_range = np.random.uniform(-0.2, 0.2)
         # coffee_cup_7.set_position_orientation(position=th.tensor([ 1.523, -0.196 + y_range,  0.81]), orientation=th.tensor([     0.006,     -0.001,      0.997,     -0.079]))
@@ -872,6 +887,10 @@ class EnvOmniGibson(EB.EnvBase):
                             print(f"Object {obj.name} is not upright, randomizing again")
                             retry = True
                             break
+                
+                # # remove later
+                # retry = True
+                
                 if retry:
                     retry = False
                     # breakpoint()
@@ -2044,6 +2063,35 @@ class EnvOmniGibson(EB.EnvBase):
             # )
             # self.distractor_objects.append(distractor_object)
 
+            # obj = DatasetObject(
+            #     name="mop",
+            #     category="mop",
+            #     model="qclfvj",
+            # )
+            # distractor_objects.append(obj)
+            # distractor_object = dict(
+            #     obj=obj,
+            #     associated_furniture="floors_kxcpgy_0",
+            #     associated_task_obj="frying_pan_602",
+            #     obstacle_for="navigation"
+            # )
+            # self.distractor_objects.append(distractor_object)
+
+            # obj = DatasetObject(
+            #     name="pot_plant",
+            #     category="pot_plant",
+            #     model="cqqyzp",
+            #     scale=th.tensor([1.3, 1.3, 1.3]),
+            # )
+            # distractor_objects.append(obj)
+            # distractor_object = dict(
+            #     obj=obj,
+            #     associated_furniture="bar_rkgjer_0",
+            #     associated_task_obj="frying_pan_602",
+            #     obstacle_for="manipulation"
+            # )
+            # self.distractor_objects.append(distractor_object)
+            
             # barbecue_sauce_bottle-gfxrnj
             # bottle_of_beer-mljzrl
             # bowl-wtepsx
