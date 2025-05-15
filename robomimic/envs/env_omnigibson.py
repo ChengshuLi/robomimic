@@ -540,8 +540,15 @@ class EnvOmniGibson(EB.EnvBase):
                         og.sim.step()
                     cond = self._get_relevant_initial_condition(obj)
                     assert cond is not None, f"Condition not found for object {obj.name}"
-                    if cond.evaluate():
-                        break
+                    # Don't do bddl check for clean pan baselines 
+                    if self.name.startswith("r1_clean_pan") and self.baseline in ["mimicgen", "skillgen"]:
+                        scrub = self.env.scene.object_registry("name", "scrub_brush_601")
+                        sink = self.env.scene.object_registry("name", "drop_in_sink_awvzkn_0")
+                        if scrub.states[object_states.OnTop].get_value(sink):
+                            break
+                    else:
+                        if cond.evaluate():
+                            break
                     og.sim.load_state(state)
 
     def _get_relevant_initial_condition(self, obj):
@@ -2003,9 +2010,10 @@ class EnvOmniGibson(EB.EnvBase):
 
     def update_env_post_creation_r1_clean_pan(self):
         # Moving the scrub away from the faucet
-        scrub_brush_601 = self.env.scene.object_registry("name", "scrub_brush_601")
-        scrub_brush_601.set_position_orientation(position=th.tensor([6.5, -1.856, 0.905]), orientation=th.tensor([0.796, -0.606, -0.001, -0.007]))
-        for _ in range(5): og.sim.step()
+        if self.baseline not in ["mimicgen", "skillgen"]: 
+            scrub_brush_601 = self.env.scene.object_registry("name", "scrub_brush_601")
+            scrub_brush_601.set_position_orientation(position=th.tensor([6.5, -1.856, 0.905]), orientation=th.tensor([0.796, -0.606, -0.001, -0.007]))
+            for _ in range(5): og.sim.step()
 
         # Set the default orn of pan (around which D0 will sample)
         frying_pan_602 = self.env.scene.object_registry("name", "frying_pan_602")
