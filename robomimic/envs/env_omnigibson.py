@@ -21,6 +21,7 @@ from omnigibson.action_primitives.starter_semantic_action_primitives import Star
 from omnigibson.objects.dataset_object import DatasetObject
 from omnigibson.action_primitives.curobo import CuRoboEmbodimentSelection
 from omnigibson.controllers import ControlType
+from omnigibson.systems.system_base import BaseSystem
 
 # from mimicgen.train_scripts.train_prep_data import compute_point_cloud_from_rgbd
 from scipy.spatial.transform import Rotation as R
@@ -248,7 +249,7 @@ class EnvOmniGibson(EB.EnvBase):
             self.update_env_post_creation_r1_clean_pan()
 
         # self.env.robots[0]._grasping_mode = "sticky"
-        self.env.scene.update_initial_state()
+        self.env.scene.update_initial_file()
 
         self.customize_physical_properties()
         self.sensor_info = self.sensor_setup()
@@ -404,7 +405,7 @@ class EnvOmniGibson(EB.EnvBase):
         elif self.name.startswith("r1_pick_cup"):
             return [self.env.scene.object_registry("name", name) for name in ["coffee_cup_7", "breakfast_table_6"]]
         elif self.name.startswith("r1_dishes_away"):
-            return [self.env.scene.object_registry("name", name) for name in ["bar_gjeoer_0", "shelf_pfusrd_1", "plate_603", "plate_602", "plate_601"]]
+            return [self.env.scene.object_registry("name", name) for name in ["countertop_kelker_0", "shelf_pfusrd_1", "plate_603", "plate_602", "plate_601"]]
         elif self.name.startswith("r1_clean_pan"):
             return [self.env.scene.object_registry("name", name) for name in ["frying_pan_602", "scrub_brush_601"]]
         else:
@@ -526,7 +527,7 @@ class EnvOmniGibson(EB.EnvBase):
         # breakpoint()
 
         for obj in objs:
-            if all(keyword not in obj.name for keyword in ["table", "shelf", "bar", "sink"]):
+            if all(keyword not in obj.name for keyword in ["table", "shelf", "countertop", "sink"]):
                 pos, orn = obj.get_position_orientation()
                 state = og.sim.dump_state()
                 while True:
@@ -1398,7 +1399,7 @@ class EnvOmniGibson(EB.EnvBase):
             obj_states = {}
             obj_bddl_names = [obj.bddl_inst for obj in self.env._task.object_scope.values()] # get object names
             for obj_name in obj_bddl_names:
-                if self.env.task.object_scope[obj_name].og_categories[0] in ["dust"]:
+                if isinstance(self.env.task.object_scope[obj_name].unwrapped, BaseSystem):
                     continue
                 # TODO: here not checking whether the object exist in the scene, may need to handle this silimar to omnigibson/tasks/behavior_task.py
                 pos, ori = self.env.task.object_scope[obj_name].get_position_orientation()
@@ -2090,7 +2091,7 @@ class EnvOmniGibson(EB.EnvBase):
             # distractor_objects.append(obj)
             # distractor_object = dict(
             #     obj=obj,
-            #     associated_furniture="bar_gjeoer_0",
+            #     associated_furniture="countertop_kelker_0",
             #     associated_task_obj="frying_pan_602",
             #     obstacle_for="manipulation"
             # )
@@ -2104,7 +2105,7 @@ class EnvOmniGibson(EB.EnvBase):
             distractor_objects.append(obj)
             distractor_object = dict(
                 obj=obj,
-                associated_furniture="bar_gjeoer_0",
+                associated_furniture="countertop_kelker_0",
                 associated_task_obj="plate_601",
                 obstacle_for="manipulation"
             )
@@ -2118,7 +2119,7 @@ class EnvOmniGibson(EB.EnvBase):
             # distractor_objects.append(obj)
             # distractor_object = dict(
             #     obj=obj,
-            #     associated_furniture="bar_gjeoer_0",
+            #     associated_furniture="countertop_kelker_0",
             #     associated_task_obj="frying_pan_602",
             #     obstacle_for="manipulation"
             # )
@@ -2132,7 +2133,7 @@ class EnvOmniGibson(EB.EnvBase):
             distractor_objects.append(obj)
             distractor_object = dict(
                 obj=obj,
-                associated_furniture="bar_gjeoer_0",
+                associated_furniture="countertop_kelker_0",
                 associated_task_obj="plate_602",
                 obstacle_for="manipulation"
             )
@@ -2276,7 +2277,7 @@ class EnvOmniGibson(EB.EnvBase):
             distractor_objects.append(obj)
             distractor_object = dict(
                 obj=obj,
-                associated_furniture="bar_gjeoer_0",
+                associated_furniture="countertop_kelker_0",
                 associated_task_obj="frying_pan_602",
                 obstacle_for="manipulation"
             )
@@ -2304,7 +2305,7 @@ class EnvOmniGibson(EB.EnvBase):
             distractor_objects.append(obj)
             distractor_object = dict(
                 obj=obj,
-                associated_furniture="bar_gjeoer_0",
+                associated_furniture="countertop_kelker_0",
                 associated_task_obj="frying_pan_602",
                 obstacle_for="manipulation"
             )
