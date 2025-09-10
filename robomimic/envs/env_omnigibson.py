@@ -22,6 +22,8 @@ from omnigibson.objects.dataset_object import DatasetObject
 from omnigibson.action_primitives.curobo import CuRoboEmbodimentSelection
 from omnigibson.controllers import ControlType
 from omnigibson.systems.system_base import BaseSystem
+from omnigibson.robots.r1 import R1
+from omnigibson.robots.tiago import Tiago
 
 # from mimicgen.train_scripts.train_prep_data import compute_point_cloud_from_rgbd
 from scipy.spatial.transform import Rotation as R
@@ -154,6 +156,10 @@ class EnvOmniGibson(EB.EnvBase):
         elif self.name.startswith("r1_clean_pan"):
             self.update_params_r1_clean_pan(kwargs)
             self.robot_reset_pos = "untuck"       # Options: ["tuck", "untuck"]
+        
+        elif self.name.startswith("r1_bringing_water"):
+            self.update_params_r1_bringing_water(kwargs)
+            self.robot_reset_pos = "tuck"       # Options: ["tuck", "untuck"]
 
         # Since the interpolation in mimicgen does not work well with the robot tucked. This is due to subpar IK controller probably
         if baseline == "mimicgen":
@@ -248,7 +254,10 @@ class EnvOmniGibson(EB.EnvBase):
         elif self.name.startswith("r1_clean_pan"):
             self.update_env_post_creation_r1_clean_pan()
 
-        # self.env.robots[0]._grasping_mode = "sticky"
+        # self.robot._grasping_mode = "sticky"
+        from omnigibson.macros import macros
+        with macros.unlocked():
+            macros.robots.manipulation_robot.GRASP_WINDOW = 0.0
         self.env.scene.update_initial_file()
 
         self.customize_physical_properties()
@@ -327,7 +336,7 @@ class EnvOmniGibson(EB.EnvBase):
             self.primitive = StarterSemanticActionPrimitives(
                 self.env,
                 self.env.robots[0],
-                enable_head_tracking=self.soft_visibility_constraint,
+                enable_head_tracking=self.soft_visibility_constraint or isinstance(self.env.robots[0], Tiago), # TODO: for now, Tiago should always have head tracking enabled
                 curobo_batch_size=6,
                 # curobo_use_cuda_graph=not self.soft_visibility_constraint,
                 curobo_use_cuda_graph=False,
@@ -408,6 +417,8 @@ class EnvOmniGibson(EB.EnvBase):
             return [self.env.scene.object_registry("name", name) for name in ["countertop_kelker_0", "shelf_pfusrd_1", "plate_603", "plate_602", "plate_601"]]
         elif self.name.startswith("r1_clean_pan"):
             return [self.env.scene.object_registry("name", name) for name in ["frying_pan_602", "scrub_brush_601"]]
+        elif self.name.startswith("r1_bringing_water"):
+            return [self.env.scene.object_registry("name", name) for name in ["beer_bottle_595", "fridge_dszchb_0"]]
         else:
             raise ValueError(f"Unknown environment name: {self.name}")
 
@@ -520,6 +531,9 @@ class EnvOmniGibson(EB.EnvBase):
         elif self.name.startswith("r1_clean_pan"):
             pos_magnitude = [-0.15, 0.15] 
             rot_magnitude = np.pi / 12  # 15 degrees
+        elif self.name.startswith("r1_bringing_water"):
+            pos_magnitude = [-0.05, 0.05] 
+            rot_magnitude = np.pi / 24 # 7.5 degrees
 
         # pan = self.env.scene.object_registry("name", "frying_pan_602")
         # pan.set_position_orientation(th.tensor([5.2, -1.8, 0.908]), th.tensor([    -0.000,      0.000,     -0.499,      0.866]))
@@ -527,7 +541,7 @@ class EnvOmniGibson(EB.EnvBase):
         # breakpoint()
 
         for obj in objs:
-            if all(keyword not in obj.name for keyword in ["table", "shelf", "countertop", "sink"]):
+            if all(keyword not in obj.name for keyword in ["table", "shelf", "countertop", "sink", "fridge"]):
                 pos, orn = obj.get_position_orientation()
                 state = og.sim.dump_state()
                 while True:
@@ -997,8 +1011,9 @@ class EnvOmniGibson(EB.EnvBase):
         Setup the mass, friction specifically for each task
         """
         # Change the color of the robot to be black.
-        for material in self.robot.materials:
-            material.diffuse_color_constant = th.tensor([0.0, 0.0, 0.0])
+        if isinstance(self.robot, R1):
+            for material in self.robot.materials:
+                material.diffuse_color_constant = th.tensor([0.0, 0.0, 0.0])
 
         if self.name.startswith("test_r1_cup"):
             # Increase gripper friction
@@ -1079,6 +1094,25 @@ class EnvOmniGibson(EB.EnvBase):
             og.sim.load_state(state)
         
         elif self.name.startswith("r1_clean_pan"):
+            # Increase gripper friction
+            state = og.sim.dump_state()
+            og.sim.stop()
+            target_friction = 4.0
+            gripper_mat = lazy.isaacsim.core.api.materials.physics_material.PhysicsMaterial(
+                prim_path=f"{self.env.robots[0].prim_path}/gripper_mat",
+                name="gripper_material",
+                static_friction=target_friction,
+                dynamic_friction=target_friction,
+                restitution=None,
+            )
+            for links in self.env.robots[0].finger_links.values():
+                for link in links:
+                    for msh in link.collision_meshes.values():
+                        msh.apply_physics_material(gripper_mat)
+            og.sim.play()
+            og.sim.load_state(state)
+        
+        elif self.name.startswith("r1_bringing_water"):
             # Increase gripper friction
             state = og.sim.dump_state()
             og.sim.stop()
@@ -1308,7 +1342,7 @@ class EnvOmniGibson(EB.EnvBase):
         left_gripper_width = obs['gripper_left_qpos'].sum()[None] # 1
         right_gripper_width = obs['gripper_right_qpos'].sum()[None] # 1
         prop_state = np.concatenate((base_qvel, trunk_qpos, arm_left_qpos, arm_right_qpos, left_gripper_width, right_gripper_width)) # 21
-        if 'r1' in self.name: assert prop_state.shape[0] == 21
+        if isinstance(self.robot, R1): assert prop_state.shape[0] == 21
         return prop_state
 
     def process_eef(self, obs):
@@ -1317,7 +1351,7 @@ class EnvOmniGibson(EB.EnvBase):
         eef_left_quat = obs['eef_left_quat'] # 4
         eef_right_quat = obs['eef_right_quat'] # 4
         eef_state = np.concatenate((eef_left_pos, eef_right_pos, eef_left_quat, eef_right_quat)) # 14
-        if 'r1' in self.name: assert eef_state.shape[0] == 14 # for r1 robot
+        if isinstance(self.robot, R1): assert eef_state.shape[0] == 14 # for r1 robot
         return eef_state
     
     def process_prop_eef(self, obs):
@@ -1336,7 +1370,7 @@ class EnvOmniGibson(EB.EnvBase):
         prop_eef_state = np.concatenate((base_qvel, trunk_qpos, 
                                      arm_left_qpos, eef_left_pos, eef_left_quat, left_gripper_width, 
                                      arm_right_qpos, eef_right_pos, eef_right_quat, right_gripper_width)) # 35
-        if 'r1' in self.name: assert prop_eef_state.shape[0] == 35 # for r1 robot
+        if isinstance(self.robot, R1): assert prop_eef_state.shape[0] == 35 # for r1 robot
         return prop_eef_state
 
     def process_prop_eef_basepose(self, obs):
@@ -1355,7 +1389,7 @@ class EnvOmniGibson(EB.EnvBase):
         prop_eef_basepose_state = np.concatenate((base_qpos, base_qvel, trunk_qpos, 
                                      arm_left_qpos, eef_left_pos, eef_left_quat, left_gripper_width, 
                                      arm_right_qpos, eef_right_pos, eef_right_quat, right_gripper_width)) # 38
-        if 'r1' in self.name: assert prop_eef_basepose_state.shape[0] == 38 # for r1 robot
+        if isinstance(self.robot, R1): assert prop_eef_basepose_state.shape[0] == 38 # for r1 robot
         return prop_eef_basepose_state
 
     def process_base_vel_robot_frame(self, robot_prop_states):
@@ -1666,7 +1700,7 @@ class EnvOmniGibson(EB.EnvBase):
         kwargs["robots"][0]["sensor_config"]["VisionSensor"]["sensor_kwargs"]["horizontal_aperture"] = 25.0
 
         # Untucked reset joint positions. The torso is different from the default R1 untucked position
-        if self.robot_reset_pos == "untuck":
+        if kwargs["robots"][0]["type"] == "R1" and self.robot_reset_pos == "untuck":
             kwargs["robots"][0]["reset_joint_pos"] = [
                     0.0000,
                     0.0000,
@@ -1695,7 +1729,7 @@ class EnvOmniGibson(EB.EnvBase):
                     0.0500,
                     0.0500,
                 ]
-        elif self.robot_reset_pos == "tuck":
+        elif kwargs["robots"][0]["type"] == "R1" and self.robot_reset_pos == "tuck":
             # Tucked reset joint positions. The torso is different from the default R1 tucked position
             kwargs["robots"][0]["reset_joint_pos"] = [
                     0.0000,
@@ -1735,13 +1769,17 @@ class EnvOmniGibson(EB.EnvBase):
         if self.baseline in ["mimicgen", "skillgen"]:
             self.reset_base_pose = (th.tensor(kwargs["robots"][0]["position"]) + th.tensor([1.0, 0.0, 0.0]), kwargs["robots"][0]["orientation"])
         else:
-            self.reset_base_pose = (th.tensor([-0.863, -0.26, 0]), th.tensor([0.0, 0.0, 0.0, 1.0]))
+            # self.reset_base_pose = (th.tensor([-0.863, -0.26, 0]), th.tensor([0.0, 0.0, 0.0, 1.0]))
+            self.reset_base_pose = (th.tensor([0.0, 0.0, 0]), th.tensor([0.0, 0.0, 0.0, 1.0]))
 
         # if self.name.endswith("D2"):
         #     kwargs["scene"]["load_object_categories"].append("straight_chair")
 
     def update_params_r1_tidy_table(self, kwargs):
-        kwargs["scene"]["load_room_instances"] = ["kitchen_0", "dining_room_0", "entryway_0", "living_room_0"]
+        if kwargs["robots"][0]["type"] == "R1":
+            kwargs["scene"]["load_room_instances"] = ["kitchen_0", "dining_room_0", "entryway_0", "living_room_0"]
+        else:
+            kwargs["scene"]["load_room_instances"] = ["kitchen_0"]
         kwargs["scene"]["not_load_object_categories"] = ["taboret"]
         # NOTE: in mimicgen/skillgen we are reaplying the exact same base pose. So, we need the init robot pose to be the same as that in source demo
         if self.baseline not in ["mimicgen", "skillgen"]:
@@ -1757,7 +1795,10 @@ class EnvOmniGibson(EB.EnvBase):
 
     
     def update_params_r1_dishes_away(self, kwargs):
-        kwargs["scene"]["load_room_instances"] = ["kitchen_0", "dining_room_0", "entryway_0", "living_room_0"]
+        if kwargs["robots"][0]["type"] == "R1":
+            kwargs["scene"]["load_room_instances"] = ["kitchen_0", "dining_room_0", "entryway_0", "living_room_0"]
+        else:
+            kwargs["scene"]["load_room_instances"] = ["kitchen_0"]
         # For the task of dishes away, we don't load the fridge
         kwargs["scene"]["not_load_object_categories"] = ["fridge"]
         if self.baseline not in ["mimicgen", "skillgen"]:
@@ -1769,11 +1810,26 @@ class EnvOmniGibson(EB.EnvBase):
         self.reset_base_pose = (kwargs["robots"][0]["position"], kwargs["robots"][0]["orientation"])
 
     def update_params_r1_clean_pan(self, kwargs):
-        kwargs["scene"]["load_room_instances"] = ["kitchen_0", "dining_room_0", "entryway_0", "living_room_0"]
+        if kwargs["robots"][0]["type"] == "R1":
+            kwargs["scene"]["load_room_instances"] = ["kitchen_0", "dining_room_0", "entryway_0", "living_room_0"]
+        else:
+            kwargs["scene"]["load_room_instances"] = ["kitchen_0"]
         if self.baseline not in ["mimicgen", "skillgen"]:
             # kwargs["robots"][0]["position"] = [4.1, 1.7, kwargs["robots"][0]["position"][2]]
             # kwargs["robots"][0]["orientation"] = R.from_euler('z', -1.1, degrees=False).as_quat().tolist()
             kwargs["robots"][0]["position"] = [5.4, 1.7, kwargs["robots"][0]["position"][2]]
+            kwargs["robots"][0]["orientation"] = R.from_euler('z', -2.3, degrees=False).as_quat().tolist()
+        
+        self.reset_base_pose = (kwargs["robots"][0]["position"], kwargs["robots"][0]["orientation"])
+    
+    def update_params_r1_bringing_water(self, kwargs):
+        if kwargs["robots"][0]["type"] == "R1":
+            kwargs["scene"]["load_room_instances"] = ["kitchen_0", "dining_room_0", "entryway_0", "living_room_0"]
+        else:
+            kwargs["scene"]["load_room_instances"] = ["kitchen_0"]
+            kwargs["scene"]["load_object_categories"] = ["floors", "fridge", "beer_bottle"]
+        if self.baseline not in ["mimicgen", "skillgen"]:
+            kwargs["robots"][0]["position"] = [6.0, -0.8, kwargs["robots"][0]["position"][2]] # TODO: need to change to a reasonable robot init position
             kwargs["robots"][0]["orientation"] = R.from_euler('z', -2.3, degrees=False).as_quat().tolist()
         
         self.reset_base_pose = (kwargs["robots"][0]["position"], kwargs["robots"][0]["orientation"])
