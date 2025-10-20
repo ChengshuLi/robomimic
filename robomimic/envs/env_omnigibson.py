@@ -25,6 +25,8 @@ from omnigibson.systems.system_base import BaseSystem
 from omnigibson.robots.r1 import R1
 from omnigibson.robots.tiago import Tiago
 
+from momagen.env_interfaces.omnigibson import TASK_CONFIGS
+
 # from mimicgen.train_scripts.train_prep_data import compute_point_cloud_from_rgbd
 from scipy.spatial.transform import Rotation as R
 import fpsample
@@ -132,6 +134,11 @@ class EnvOmniGibson(EB.EnvBase):
         self.soft_visibility_constraint = True
         self.hard_visibility_constraint = True
 
+        # Default attributes
+        self.robot_reset_pos = "untuck"
+        self.reset_base_pose = (kwargs["robots"][0]["position"], kwargs["robots"][0]["orientation"])
+
+        # Task specific updates to kwargs
         if self.name.startswith("r1_pick_cup"):
             self.update_params_r1_pick_cup(kwargs)
             # need to use untuck other wise real-robot joint limits make tucked version out of limit
@@ -379,7 +386,8 @@ class EnvOmniGibson(EB.EnvBase):
             # eef_right_img = obs[f"{robot_name}::{robot_name}:right_eef_link:Camera:0::rgb"]
             # viewer_img = og.sim.viewer_camera._get_obs()[0]['rgb'].numpy()[:, :, :3]
             external_sensor2_img = self.env._external_sensors["external_sensor2"].get_obs()[0]["rgb"][:,:,:3].numpy()
-            concatenated_img = hori_concatenate_image([ego_img, external_sensor2_img])
+            # concatenated_img = hori_concatenate_image([ego_img, external_sensor2_img])
+            concatenated_img = hori_concatenate_image([external_sensor2_img])
             video_writer.append_data(concatenated_img)
         #     for env_idx, single_env in enumerate(self.env.envs):
         #         external_obs = single_env.external_sensors["external_sensor0"].get_obs()[0]["rgb"][:,:,:3].numpy()
@@ -392,37 +400,14 @@ class EnvOmniGibson(EB.EnvBase):
         # changed to output with truncated
         return obs, r, done, truncated, info
 
-    # TODO: make it more generalizable
     # Get task relevant objects based on the env name (BDDL activity name)
     def _get_task_relevant_objs(self):
-        if self.name.startswith("test_pen_book"):
-            obj_names = ["rubber_eraser.n.01_1", "hardback.n.01_1"]
-        elif self.name.startswith("test_cabinet"):
-            obj_names = ["cabinet.n.01_1"]
-        elif self.name.startswith("test_tiago_giftbox"):
-            obj_names = ["gift_box.n.01_1"]
-        elif self.name.startswith("test_tiago_notebook"):
-            obj_names = ["notebook.n.01_1", "breakfast_table.n.01_1"]
-        elif self.name.startswith("test_tiago_single_arm_cup"):
-            return [self.env.scene.object_registry("name", name) for name in ["coffee_cup", "teacup", "breakfast_table"]]
-        elif self.name.startswith("test_r1_cup"):
-            return [self.env.scene.object_registry("name", name) for name in ["coffee_cup", "teacup", "breakfast_table"]]
-        elif self.name.startswith("r1_put_away_cup"):
-            return [self.env.scene.object_registry("name", name) for name in ["coffee_cup", "teacup", "breakfast_table"]]
-        elif self.name.startswith("r1_tidy_table"):
-            return [self.env.scene.object_registry("name", name) for name in ["teacup_601", "drop_in_sink_awvzkn_0"]]
-        elif self.name.startswith("r1_pick_cup"):
-            return [self.env.scene.object_registry("name", name) for name in ["coffee_cup_7", "breakfast_table_6"]]
-        elif self.name.startswith("r1_dishes_away"):
-            return [self.env.scene.object_registry("name", name) for name in ["countertop_kelker_0", "shelf_pfusrd_1", "plate_603", "plate_602", "plate_601"]]
-        elif self.name.startswith("r1_clean_pan"):
-            return [self.env.scene.object_registry("name", name) for name in ["frying_pan_602", "scrub_brush_601"]]
-        elif self.name.startswith("r1_bringing_water"):
-            return [self.env.scene.object_registry("name", name) for name in ["beer_bottle_595", "fridge_dszchb_0"]]
+        task_name = self.name.rsplit('_', 1)[0]
+        if task_name in TASK_CONFIGS:
+            task_relevant_obj_names = list(TASK_CONFIGS[task_name].tracked_objects.keys())
+            return [self.env.scene.object_registry("name", name) for name in task_relevant_obj_names]
         else:
             raise ValueError(f"Unknown environment name: {self.name}")
-
-        return [self.env.task.object_scope[obj] for obj in obj_names]
 
     def early_termination(self, env_step, ob_dict=None):
         """
@@ -518,6 +503,9 @@ class EnvOmniGibson(EB.EnvBase):
     # randomize the pose of all the task relevant objects in xy-pos and z-rot
     def _randomize_object_pose_D0(self, objs):
 
+        # default values
+        pos_magnitude = [-0.1, 0.1] 
+        rot_magnitude = np.pi / 12 # 15 degrees
         # Sampling random object poses using custom thresholds
         if self.name.startswith("r1_pick_cup"):
             pos_magnitude = [-0.15, 0.15] 
@@ -732,76 +720,6 @@ class EnvOmniGibson(EB.EnvBase):
         
         return upright
     
-    # def _randomize_object_pose_D1(self, objs):
-    #     # pos_magnitude = 0.10  # 5cm
-    #     # rot_magnitude = np.pi / 12  # 15 degrees
-
-    #     # # for debugging
-    #     # # pos_magnitude = 0.001
-    #     # # rot_magnitude = np.pi / 10000  # 15 degrees
-
-    #     # for obj in objs:
-    #     #     if "table" not in obj.name:
-    #     #         pos, orn = obj.get_position_orientation()
-    #     #         pos_diff_xy = np.random.uniform(-pos_magnitude, pos_magnitude, size=2)
-    #     #         pos_diff = th.from_numpy(np.concatenate([pos_diff_xy, np.zeros(1)])).float()
-    #     #         pos += pos_diff
-    #     #         # TODO： without mobile motion， the target pose need to be very carefully selected
-    #     #         pos += th.from_numpy(np.array([-.15, 0.0, 0]))
-    #     #         orn_diff = th.from_numpy(np.array([0.0, 0.0, np.random.uniform(-rot_magnitude, rot_magnitude)]))
-    #     #         orn = T.mat2quat(T.euler2mat(orn_diff) @ T.quat2mat(orn))
-
-    #     #         pos[1] = -pos[1] # mirror the position along the y-axis
-    #     #         orn = T.mat2quat(T.euler2mat(th.tensor([0.0, 0.0, np.pi])) @ T.quat2mat(orn)) # add pi orientation along the y-axis
-    #     #         obj.set_position_orientation(pos, orn)
-
-    #     # # Randomize height of table
-    #     # breakfast_table = self.env.scene.object_registry("name", "breakfast_table")
-    #     # breakfast_table_current_scale = breakfast_table.scale
-    #     # z_scale = np.random.uniform(0.8, 1.2)
-    #     # # print(f"z_scale: {z_scale}")
-    #     # temp_state = og.sim.dump_state(serialized=False)
-    #     # og.sim.stop()
-    #     # breakfast_table.scale = th.tensor([breakfast_table_current_scale[0], breakfast_table_current_scale[1], 1.0 * z_scale])
-    #     # og.sim.play()
-    #     # og.sim.load_state(temp_state)
-    #     # breakfast_table.keep_still()
-    #     # for _ in range(10): og.sim.step()
-
-    #     # # debugging
-    #     # coffee_cup = self.env.scene.object_registry("name", "coffee_cup")
-    #     # x_pos = np.random.uniform(0.67, 0.71)
-    #     # y_pos = np.random.uniform(-0.5, 0.5)
-    #     # current_coffee_cup_pos = coffee_cup.get_position()
-    #     # coffee_cup.set_position_orientation(position=th.tensor([x_pos, y_pos, 0.9]))
-
-    #     # # Sampling random object poses on table using OG API
-    #     # for obj in objs:
-    #     #     if "table" not in obj.name:
-    #     #         obj.states[object_states.OnTop].set_value(other=self.env.scene.object_registry("name", "breakfast_table"), new_value=True)
-
-    #     bar = self.env.scene.object_registry("name", "bar_udatjt_0")
-    #     bar_current_scale = bar.scale
-    #     z_scale = 0.7
-    #     # z_scale = np.random.uniform(0.8, 1.2)
-    #     temp_state = og.sim.dump_state(serialized=False)
-    #     og.sim.stop()
-    #     bar.scale = th.tensor([bar_current_scale[0], bar_current_scale[1], 1.0 * z_scale])
-    #     og.sim.play()
-    #     og.sim.load_state(temp_state)
-    #     bar.keep_still()
-    #     bar.set_position_orientation(position=th.tensor([7.287, 0.189, 0.40]))
-    #     for _ in range(10): og.sim.step()
-
-    #     # For house_single_floor scene
-    #     for obj in objs:
-    #         if "table" not in obj.name:
-    #             obj.states[object_states.OnTop].set_value(other=bar, new_value=True)
-
-    #     # teacup = self.env.scene.object_registry("name", "teacup")
-    #     # x_range = np.random.uniform(-0.2, 0.2)
-    #     # teacup.set_position_orientation(position=th.tensor([ 6.700 + x_range, 0.024,  0.739]), orientation=th.tensor([    -0.000,      0.000,      0.858,      0.514]))
-
     def reset(self):
         """
         Reset environment.
@@ -1010,129 +928,44 @@ class EnvOmniGibson(EB.EnvBase):
         """
         Setup the mass, friction specifically for each task
         """
-        # Change the color of the robot to be black.
-        if isinstance(self.robot, R1):
-            for material in self.robot.materials:
-                material.diffuse_color_constant = th.tensor([0.0, 0.0, 0.0])
+        # # Change the color of the robot to be black.
+        # if isinstance(self.robot, R1):
+        #     for material in self.robot.materials:
+        #         material.diffuse_color_constant = th.tensor([0.0, 0.0, 0.0])
 
-        if self.name.startswith("test_r1_cup"):
-            # Increase gripper friction
-            state = og.sim.dump_state()
-            og.sim.stop()
-            target_friction = 2.0
-            gripper_mat = lazy.isaacsim.core.api.materials.physics_material.PhysicsMaterial(
-                prim_path=f"{self.env.robots[0].prim_path}/gripper_mat",
-                name="gripper_material",
-                static_friction=target_friction,
-                dynamic_friction=target_friction,
-                restitution=None,
-            )
-            for links in self.env.robots[0].finger_links.values():
-                for link in links:
-                    for msh in link.collision_meshes.values():
-                        msh.apply_physics_material(gripper_mat)
-            og.sim.play()
-            og.sim.load_state(state)
+        # Increase gripper friction
+        state = og.sim.dump_state()
+        og.sim.stop()
+        target_friction = 4.0
+        gripper_mat = lazy.isaacsim.core.api.materials.physics_material.PhysicsMaterial(
+            prim_path=f"{self.env.robots[0].prim_path}/gripper_mat",
+            name="gripper_material",
+            static_friction=target_friction,
+            dynamic_friction=target_friction,
+            restitution=None,
+        )
+        for links in self.env.robots[0].finger_links.values():
+            for link in links:
+                for msh in link.collision_meshes.values():
+                    msh.apply_physics_material(gripper_mat)
+        og.sim.play()
+        og.sim.load_state(state)
 
-            print('finish setting up the gripper friction in test_r1')
-        
-        elif self.name.startswith("r1_pick_cup"):
-            # Increase gripper friction
-            state = og.sim.dump_state()
-            og.sim.stop()
-            target_friction = 4.0
-            gripper_mat = lazy.isaacsim.core.api.materials.physics_material.PhysicsMaterial(
-                prim_path=f"{self.env.robots[0].prim_path}/gripper_mat",
-                name="gripper_material",
-                static_friction=target_friction,
-                dynamic_friction=target_friction,
-                restitution=None,
-            )
-            for links in self.env.robots[0].finger_links.values():
-                for link in links:
-                    for msh in link.collision_meshes.values():
-                        msh.apply_physics_material(gripper_mat)
-            og.sim.play()
-            og.sim.load_state(state)
+        # Any other task specific customizations for the physical properties should be added here        
+        if self.name.startswith("r1_pick_cup"):
+            pass
         
         elif self.name.startswith("r1_dishes_away"):
-            # Increase gripper friction
-            state = og.sim.dump_state()
-            og.sim.stop()
-            target_friction = 4.0
-            gripper_mat = lazy.isaacsim.core.api.materials.physics_material.PhysicsMaterial(
-                prim_path=f"{self.env.robots[0].prim_path}/gripper_mat",
-                name="gripper_material",
-                static_friction=target_friction,
-                dynamic_friction=target_friction,
-                restitution=None,
-            )
-            for links in self.env.robots[0].finger_links.values():
-                for link in links:
-                    for msh in link.collision_meshes.values():
-                        msh.apply_physics_material(gripper_mat)
-            og.sim.play()
-            og.sim.load_state(state)
-        
-        elif self.name.startswith("r1_tidy_table"):
-            # Increase gripper friction
-            state = og.sim.dump_state()
-            og.sim.stop()
-            target_friction = 4.0
-            gripper_mat = lazy.isaacsim.core.api.materials.physics_material.PhysicsMaterial(
-                prim_path=f"{self.env.robots[0].prim_path}/gripper_mat",
-                name="gripper_material",
-                static_friction=target_friction,
-                dynamic_friction=target_friction,
-                restitution=None,
-            )
-            for links in self.env.robots[0].finger_links.values():
-                for link in links:
-                    for msh in link.collision_meshes.values():
-                        msh.apply_physics_material(gripper_mat)
-            og.sim.play()
-            og.sim.load_state(state)
-        
-        elif self.name.startswith("r1_clean_pan"):
-            # Increase gripper friction
-            state = og.sim.dump_state()
-            og.sim.stop()
-            target_friction = 4.0
-            gripper_mat = lazy.isaacsim.core.api.materials.physics_material.PhysicsMaterial(
-                prim_path=f"{self.env.robots[0].prim_path}/gripper_mat",
-                name="gripper_material",
-                static_friction=target_friction,
-                dynamic_friction=target_friction,
-                restitution=None,
-            )
-            for links in self.env.robots[0].finger_links.values():
-                for link in links:
-                    for msh in link.collision_meshes.values():
-                        msh.apply_physics_material(gripper_mat)
-            og.sim.play()
-            og.sim.load_state(state)
-        
-        elif self.name.startswith("r1_bringing_water"):
-            # Increase gripper friction
-            state = og.sim.dump_state()
-            og.sim.stop()
-            target_friction = 4.0
-            gripper_mat = lazy.isaacsim.core.api.materials.physics_material.PhysicsMaterial(
-                prim_path=f"{self.env.robots[0].prim_path}/gripper_mat",
-                name="gripper_material",
-                static_friction=target_friction,
-                dynamic_friction=target_friction,
-                restitution=None,
-            )
-            for links in self.env.robots[0].finger_links.values():
-                for link in links:
-                    for msh in link.collision_meshes.values():
-                        msh.apply_physics_material(gripper_mat)
-            og.sim.play()
-            og.sim.load_state(state)
+            pass
 
-        else:
-            raise ValueError(f"Unknown environment name: {self.name}, need to customize the physical properties")
+        elif self.name.startswith("r1_tidy_table"):
+            pass
+            
+        elif self.name.startswith("r1_clean_pan"):
+            pass
+
+        elif self.name.startswith("r1_bringing_water"):
+            pass
         
     def sensor_setup(self):
         """
